@@ -1,0 +1,50 @@
+@startuml casos-de-uso
+left to right direction
+skinparam backgroundColor #FAFBFC
+skinparam defaultFontName DejaVu Sans
+skinparam defaultFontSize 16
+skinparam shadowing false
+skinparam roundcorner 10
+skinparam linetype polyline
+skinparam nodesep 20
+skinparam ranksep 45
+skinparam ArrowColor #607286
+skinparam ActorBorderColor #173D43
+skinparam ActorFontColor #173D43
+skinparam RectangleBackgroundColor #F1F6F5
+skinparam RectangleBorderColor #829B9C
+skinparam UsecaseBackgroundColor #FFFFFF
+skinparam UsecaseBorderColor #26786D
+skinparam UsecaseFontColor #1C3440
+skinparam titleFontColor #173D43
+skinparam titleFontSize 24
+skinparam dpi 120
+
+title Compasso Acadêmico\nO que o usuário pode fazer
+
+actor "Usuário" as Usuario
+
+rectangle "Compasso Acadêmico" {
+  usecase "Gerenciar contas\ne categorias" as Contas
+  usecase "Registrar receita\nou despesa" as Registrar
+  usecase "Editar ou excluir\nlançamento" as Editar
+  usecase "Marcar pagamento\nou recebimento" as Pagar
+  usecase "Consultar painel\ne histórico" as Consultar
+  usecase "Organizar planejamento\nmensal" as Planejar
+  usecase "Exportar ou restaurar\ncópia de segurança" as Backup
+  usecase "Reiniciar\ndemonstração" as Reiniciar
+}
+
+Usuario -- Contas
+Usuario -- Registrar
+Usuario -- Editar
+Usuario -- Pagar
+Usuario -- Consultar
+Usuario -- Planejar
+Usuario -- Backup
+Usuario -- Reiniciar
+
+legend bottom
+  Demonstração com dados fictícios e sessão individual, sem login.
+endlegend
+@enduml

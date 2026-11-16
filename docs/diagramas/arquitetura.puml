@@ -1,0 +1,31 @@
+@startuml arquitetura
+left to right direction
+skinparam backgroundColor #FAFBFC
+skinparam defaultFontName DejaVu Sans
+skinparam defaultFontSize 18
+skinparam shadowing false
+skinparam roundcorner 12
+skinparam linetype polyline
+skinparam nodesep 35
+skinparam ranksep 40
+skinparam ArrowColor #607286
+skinparam RectangleBorderColor #547477
+skinparam DatabaseBorderColor #547477
+skinparam titleFontColor #173D43
+skinparam titleFontSize 24
+skinparam dpi 120
+
+title Compasso Acadêmico\nAs três camadas do projeto
+
+rectangle "1. Interface\nReact\nTelas e formulários" as Interface #E7F4EF
+rectangle "2. API\nTypeScript + Hono\nRegras e validações" as API #EAF1F8
+database "3. Banco de dados\nSQLite / Cloudflare D1\nInformações salvas" as Banco #FFF4DF
+
+Interface <--> API : pedidos e respostas
+API <--> Banco : leitura e gravação
+
+legend bottom
+  Sem internet, o navegador permite consultar a cópia local.
+  Alterações precisam de conexão e confirmação da API.
+endlegend
+@enduml

@@ -1,0 +1,31 @@
+name: Verificar aplicação acadêmica
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  testes-e-compilacao:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Obter código
+        uses: actions/checkout@v7
+      - name: Preparar Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Instalar dependências do arquivo de versões
+        run: npm ci
+      - name: Executar testes
+        run: npm test
+      - name: Compilar interface e servidor
+        run: npm run build

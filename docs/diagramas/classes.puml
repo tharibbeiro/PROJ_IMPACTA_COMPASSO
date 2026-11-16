@@ -1,0 +1,87 @@
+@startuml classes
+top to bottom direction
+skinparam backgroundColor #FAFBFC
+skinparam defaultFontName DejaVu Sans
+skinparam defaultFontSize 16
+skinparam shadowing false
+skinparam roundcorner 10
+skinparam linetype polyline
+skinparam nodesep 90
+skinparam ranksep 60
+skinparam ArrowColor #607286
+skinparam ClassBorderColor #547477
+skinparam ClassBackgroundColor #FFFFFF
+skinparam ClassFontColor #173D43
+skinparam ClassAttributeFontColor #263C47
+skinparam ClassStereotypeFontColor #5B6D7B
+skinparam classAttributeIconSize 0
+skinparam titleFontColor #173D43
+skinparam titleFontSize 24
+skinparam dpi 125
+hide circle
+hide empty methods
+scale max 1800 width
+
+title Compasso Acadêmico\nPrincipais classes e dados
+
+interface "Conta\n(Account)" as Conta <<interface>> {
+  id: string
+  name: string
+  type: bank | cash
+  openingBalanceCents: number
+}
+
+interface "Categoria\n(Category)" as Categoria <<interface>> {
+  id: string
+  name: string
+  kind: expense | income
+}
+
+interface "Lançamento\n(Entry)" as Lancamento <<interface>> {
+  id: string
+  description: string
+  kind: expense | income
+  amountCents: number
+  occurredOn: string
+  dueOn: string
+  status: pending | paid
+}
+
+interface "Item do planejamento\n(PlanItem)" as Plano <<interface>> {
+  id: string
+  type: PlanType
+  description: string
+  amountCents: number
+  startMonth: string
+  installmentNumber?: number
+  totalInstallments?: number
+}
+
+interface "Registro mensal\n(PlanOccurrence)" as Ocorrencia <<interface>> {
+  id: string
+  month: string
+  status: pending | done
+}
+
+class "Serviço financeiro\n(FinanceService)" as Servico {
+  +apply(original, command)
+}
+
+Conta "1" -right- "0..*" Lancamento
+Lancamento "0..*" -right- "1" Categoria
+Lancamento "0..*" -down- "0..1" Plano : previsão
+Plano "1" -right- "0..*" Ocorrencia
+Ocorrencia "0..1" -[norank]- "0..1" Lancamento : vínculo
+Servico .[norank].> Plano : aplica\nregras
+
+' Estas linhas invisíveis apenas organizam os blocos em duas fileiras.
+Conta -[hidden]down- Servico
+Servico -[hidden]right- Plano
+Categoria -[hidden]down- Ocorrencia
+
+legend bottom
+  Modelo resumido: mostra os campos e vínculos principais.
+  «interface» = formato dos dados no TypeScript; ? = campo opcional.
+  1 = um | 0..1 = opcional | 0..* = zero ou vários.
+endlegend
+@enduml
