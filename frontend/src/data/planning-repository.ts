@@ -1,14 +1,12 @@
 import { localDate } from '../domain/finance';
 import type { Entry } from '../domain/types';
 import type { PlanInput, PlanItem, PlanOccurrence, PlanningSnapshot } from '../domain/planning-types';
-import { db, runRemoteCommand } from './repository';
+import { getCachedState, runRemoteCommand } from './repository';
 
-/** Consulta somente o cache de uma resposta já confirmada pela API. */
+/** Consulta a cópia em memória de uma resposta confirmada pelo Apps Script. */
 export async function getPlanningSnapshot(): Promise<PlanningSnapshot> {
-  return db.transaction('r', db.plans, db.planOccurrences, async () => {
-    const [plans, occurrences] = await Promise.all([db.plans.toArray(), db.planOccurrences.toArray()]);
-    return { plans: plans.sort((a, b) => a.createdAt.localeCompare(b.createdAt)), occurrences };
-  });
+  const { plans, occurrences } = getCachedState();
+  return { plans: plans.sort((a, b) => a.createdAt.localeCompare(b.createdAt)), occurrences };
 }
 
 export function savePlan(input: PlanInput, id?: string, expectedVersion?: number): Promise<PlanItem> {

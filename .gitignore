@@ -2,15 +2,12 @@ node_modules/
 dist/
 .env
 .env.*
-!.env.example
 .local/
-.wrangler/
+.clasp.json
+.clasprc*
 *.tsbuildinfo
 coverage/
 test-results/
 *.sqlite
 *.sqlite-*
 .DS_Store
-frontend/public/entrega/fonte.zip
-frontend/public/entrega/diagramas/
-drizzle/

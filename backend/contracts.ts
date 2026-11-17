@@ -1,7 +1,7 @@
 import type { FinanceSnapshot } from '../shared/domain/types';
 import type { PlanningSnapshot } from '../shared/domain/planning-types';
 
-/** Estado entregue à camada de negócio; não contém detalhes do banco SQL. */
+/** Estado entregue à camada de negócio; não contém detalhes da planilha. */
 export interface AcademicState extends FinanceSnapshot, PlanningSnapshot {}
 
 /** O controlador valida o envelope; o serviço valida o comando e suas regras. */
@@ -39,10 +39,11 @@ export interface CommitResult {
 }
 
 export interface FinanceRepository {
-  createSession(tokenHash: string, state: AcademicState): Promise<DemoSession>;
-  findSession(tokenHash: string): Promise<DemoSession | undefined>;
-  load(sessionId: string): Promise<LoadedFinanceState>;
-  findCommand(sessionId: string, commandId: string): Promise<{ result: unknown } | undefined>;
-  commit(sessionId: string, expectedRevision: number, commandId: string, before: AcademicState, after: AcademicState, result: unknown): Promise<CommitResult>;
-  cleanupExpired(): Promise<void>;
+  createSession(tokenHash: string, state: AcademicState): DemoSession;
+  findSession(tokenHash: string): DemoSession | undefined;
+  load(sessionId: string): LoadedFinanceState;
+  findCommand(sessionId: string, commandId: string): { result: unknown; fingerprint?: string } | undefined;
+  commit(sessionId: string, expectedRevision: number, commandId: string, before: AcademicState, after: AcademicState, result: unknown, fingerprint?: string): CommitResult;
+  invalidateSession(sessionId: string): void;
+  cleanupExpired(): void;
 }

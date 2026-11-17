@@ -1,43 +1,30 @@
 {
   "name": "compasso-academico",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
   },
   "scripts": {
-    "dev": "tsx backend/dev.ts",
-    "dev:frontend": "vite --config vite.config.ts",
-    "build": "node scripts/prepare-delivery.mjs && tsc --noEmit && vite build --config vite.config.ts && node scripts/build-worker.mjs",
-    "start": "tsx backend/dev.ts --production",
+    "build": "tsc --noEmit && node scripts/build-apps-script.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:inspect": "tsx scripts/inspect-database.ts",
     "diagrams": "node scripts/render-diagrams.mjs"
   },
   "dependencies": {
-    "dexie": "^4.0.11",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "hono": "^4.7.0",
-    "@hono/node-server": "^1.14.0"
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@testing-library/react": "^16.3.3",
-    "@testing-library/user-event": "^14.6.8",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^4.4.1",
-    "fake-indexeddb": "^6.0.0",
     "jsdom": "^26.1.0",
     "typescript": "~5.7.3",
-    "vite": "^6.1.0",
-    "vite-plugin-pwa": "^1.0.0",
     "vitest": "^3.2.4",
-    "tsx": "^4.19.0",
     "esbuild": "^0.25.0"
-  }
+  },
+  "description": "Controle financeiro com interface web, Google Apps Script e Google Sheets."
 }

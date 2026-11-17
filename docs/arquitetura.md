@@ -1,48 +1,51 @@
 # Arquitetura
 
-O Compasso está organizado em três camadas: apresentação, aplicação e persistência.
+O Compasso tem três camadas: apresentação, aplicação e dados.
 
 ![Arquitetura em três camadas](diagramas/arquitetura.svg)
 
 ## Apresentação
 
-`frontend/` contém a interface React, os formulários e o cliente HTTP. A interface mostra os dados e envia as alterações para a API.
+`frontend/` contém a interface React, os formulários e a comunicação com o servidor. A compilação reúne o código e o CSS em `apps-script/Index.html`, servido pelo `HtmlService` do Google.
 
-O IndexedDB guarda um cache do estado recebido. Sem conexão, os dados já carregados podem ser consultados, mas as alterações dependem da resposta do servidor para serem confirmadas.
+A comunicação usa chamadas assíncronas de funções por `google.script.run`, com tratamento de sucesso e erro. A interface confirma uma alteração depois da resposta do servidor. A abertura do aplicativo e as gravações dependem de conexão; os dados já carregados permanecem disponíveis para consulta na tela.
 
 ## Aplicação
 
-`backend/` contém a API Hono, a sessão da demonstração e as regras de negócio. A API recebe o comando, identifica a sessão e carrega os dados pelo repositório.
+`backend/` contém as funções do Apps Script, a sessão da demonstração e as regras financeiras. O código TypeScript é compilado para `apps-script/Code.gs` e executado no ambiente V8 do Google.
 
-A classe `FinanceService` valida valores, referências e versões. Seu método `apply` recebe o estado e um comando e devolve o estado atualizado e o resultado. A classe não depende de React, HTTP ou SQL, o que permite testar as regras separadamente.
+A classe `FinanceService` valida valores, referências e versões. Seu método `apply` recebe o estado e um comando e devolve o estado atualizado e o resultado. Os tipos e cálculos usados pelo servidor e pela interface ficam em `shared/domain/`.
 
-`shared/domain/` reúne os tipos e cálculos usados pelo servidor e pela interface.
+## Dados
 
-## Persistência
+`SheetsFinanceRepository` concentra a leitura e a gravação nas abas da planilha Google Sheets. A função de configuração cria a planilha e guarda seu identificador nas propriedades do script. Esse identificador não precisa ser enviado ao navegador nem publicado no repositório.
 
-`D1FinanceRepository` implementa o contrato `FinanceRepository` e concentra as consultas SQL parametrizadas. A migração em `database/migrations/0001_initial.sql` define tabelas, índices e restrições.
-
-Na versão publicada, o banco é Cloudflare D1. No desenvolvimento e nos testes, `NodeSqliteDatabase` adapta o SQLite do Node.js ao mesmo contrato de acesso usado pelo repositório.
+O acesso é realizado pelo Apps Script com as permissões da conta que publica o aplicativo. A planilha permanece privada; os visitantes recebem somente os dados de sua própria sessão pelo servidor.
 
 ## Fluxo de uma alteração
 
-1. A interface envia `{ id, type, payload }` para `POST /api/commands`.
-2. A API verifica a sessão e carrega o estado atual.
-3. O serviço valida e aplica a ação financeira.
-4. O repositório grava os dados e o resultado do comando em um lote transacional.
-5. A API responde com `{ state, revision, result }`, e a interface atualiza o cache.
+1. A interface cria um comando com identificador próprio.
+2. `google.script.run` envia o token da sessão e o comando ao servidor.
+3. O servidor valida a sessão e usa `ScriptLock` para proteger a operação de acessos simultâneos.
+4. O serviço aplica as regras ao estado atual.
+5. O repositório grava uma nova versão dos dados e confirma o ponteiro da sessão.
+6. O servidor devolve o estado confirmado, a revisão e o resultado.
 
-O identificador do comando evita executar o mesmo reenvio duas vezes. A revisão da sessão e as versões dos registros protegem alterações concorrentes.
+O identificador evita executar novamente um reenvio já confirmado. A revisão da sessão e as versões dos registros protegem alterações concorrentes. O detalhamento das gravações versionadas está em [Organização dos dados](modelo-dados.md).
 
-## Sessões da demonstração
+## Funções de comunicação
 
-O primeiro acesso cria uma sessão anônima com dados fictícios. As tabelas financeiras são vinculadas à sessão, e a credencial é validada pelo servidor. Reiniciar a demonstração cria uma nova sessão.
-
-## Endpoints
-
-| Método e caminho | Função |
+| Função | Finalidade |
 | --- | --- |
-| `GET /api/health` | Verificar a aplicação e a conexão SQL. |
-| `POST /api/demo-sessions` | Criar uma sessão com dados fictícios. |
-| `GET /api/bootstrap` | Consultar os dados persistidos da sessão. |
-| `POST /api/commands` | Executar uma ação financeira validada. |
+| `compassoBootstrap(token)` | Consultar os dados da sessão. |
+| `compassoCreateDemoSession(previousToken?)` | Iniciar ou reiniciar a demonstração. |
+| `compassoCommand(token, commandJson)` | Validar e executar uma ação financeira. |
+| `configurarCompasso_()` | Criar/configurar a planilha pelo editor do Apps Script. |
+
+A função de configuração é usada no editor, não pela interface pública.
+
+## Sessões
+
+Cada visitante usa um token próprio, validado pelo servidor. O armazenamento contém o hash do token e um prazo de sete dias para a sessão.
+
+Quando o navegador permite armazenamento local, o token pode ser reutilizado nos próximos acessos. Caso esse armazenamento esteja bloqueado, a aplicação o mantém em memória; ao recarregar, pode ser necessário iniciar outra sessão. Não existe compartilhamento de dados financeiros entre visitantes.

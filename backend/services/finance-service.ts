@@ -42,7 +42,7 @@ function nextVersion(current = 0): number {
   return current + 1;
 }
 
-/** Regras de negócio síncronas e independentes de HTTP, React e SQLite. */
+/** Regras de negócio síncronas e independentes da interface e do armazenamento. */
 export class FinanceService {
   constructor(private readonly clock: () => Date = () => new Date()) {}
 

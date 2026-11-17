@@ -6,7 +6,7 @@ Estes diagramas resumem o projeto implementado e mostram seus conceitos principa
 | --- | --- | --- |
 | Classes e dados | Contas, categorias, lançamentos, planejamento e o serviço que aplica as regras. | [SVG](classes.svg) · [PNG](classes.png) |
 | Casos de uso | O que o usuário pode fazer na demonstração. | [SVG](casos-de-uso.svg) · [PNG](casos-de-uso.png) |
-| Arquitetura | A comunicação entre interface, API e banco de dados. | [SVG](arquitetura.svg) · [PNG](arquitetura.png) |
+| Arquitetura | A comunicação entre interface, Google Apps Script e Google Sheets. | [SVG](arquitetura.svg) · [PNG](arquitetura.png) |
 
 ## Como ler o diagrama de classes
 
@@ -14,7 +14,7 @@ O título de cada bloco está em português. O nome entre parênteses é o ident
 
 `Account`, `Category`, `Entry`, `PlanItem` e `PlanOccurrence` são **interfaces TypeScript**: descrevem o formato dos dados. Por isso, aparecem com `«interface»`. `FinanceService` é uma classe concreta; seu método `apply` recebe um estado e um comando, valida a operação e devolve o estado atualizado.
 
-Os modelos de dados estão em `shared/domain/types.ts` e `shared/domain/planning-types.ts`. O serviço está em `backend/services/finance-service.ts`.
+Os modelos de dados estão em `shared/domain/types.ts` e `shared/domain/planning-types.ts`. O serviço está em `backend/services/finance-service.ts` e é incluído no código executado pelo Apps Script.
 
 Os números nas linhas indicam quantos registros podem estar relacionados:
 
@@ -49,7 +49,17 @@ O símbolo `?` indica um campo opcional. Uma conta pode ser bancária (`bank`) o
 
 O ator **Usuário** representa quem testa a aplicação com dados fictícios. A sessão é individual e não exige login. “Gerenciar contas e categorias” resume criar/editar contas e cadastrar categorias. O planejamento reúne cadastro de compromissos, vínculo com lançamentos, conferência de itens do cartão e marcação de reservas.
 
-A interface React envia pedidos à API TypeScript. A API valida as operações e usa o banco SQL para guardar os dados. O banco é SQLite no ambiente local e Cloudflare D1 na publicação. O navegador mantém uma cópia somente para consulta sem internet; alterações precisam da API.
+As três camadas são:
+
+1. **Interface:** telas React, HTML e CSS reunidos no arquivo `apps-script/Index.html`, servido pelo `HtmlService` do Apps Script.
+2. **Aplicação:** funções do Google Apps Script que recebem as chamadas da interface, validam os dados e executam o `FinanceService`.
+3. **Dados:** abas de uma planilha privada do Google Sheets, acessadas pelo código do servidor.
+
+A interface usa `google.script.run` para chamar `compassoBootstrap`, `compassoCreateDemoSession` e `compassoCommand`. O acesso à planilha é organizado pelo `SheetsFinanceRepository`, implementado em `backend/repositories/sheets-finance-repository.ts`. O diagrama de classes mantém o foco nos cinco modelos de dados e no serviço financeiro.
+
+As fontes TypeScript são compiladas para JavaScript. Os arquivos de publicação são `apps-script/Index.html`, `apps-script/Code.gs` e `apps-script/appsscript.json`.
+
+A planilha guarda registros em abas com campos definidos, incluindo contas, categorias, lançamentos e planejamento. O usuário acessa a aplicação; o Apps Script lê e grava os dados na planilha. A aplicação precisa de conexão com a internet.
 
 ## Editar e gerar as imagens
 

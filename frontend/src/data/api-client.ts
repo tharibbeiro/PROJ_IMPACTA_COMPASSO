@@ -1,15 +1,17 @@
 import type { FinanceSnapshot } from '../domain/types';
 import type { PlanningSnapshot } from '../domain/planning-types';
 
-/** Contrato HTTP da demonstração. Nenhuma credencial da sessão fica em JavaScript. */
+/** Dados do servidor. O navegador não grava informações financeiras por conta própria. */
 export interface AcademicState extends FinanceSnapshot, PlanningSnapshot {}
 
 export interface StateEnvelope<Result = unknown> {
   state: AcademicState;
   revision: number;
   result?: Result;
-  database?: string;
+  database?: 'Google Sheets';
   mode?: 'demo';
+  sessionToken?: string;
+  sessionExpiresAt?: string;
 }
 
 export type AcademicCommandType =
@@ -19,27 +21,89 @@ export type AcademicCommandType =
   | 'savePlan' | 'deletePlan' | 'realizePlan' | 'settlePlan'
   | 'setPlanningChecked' | 'linkPlanEntry';
 
+type RpcMethod = 'compassoBootstrap' | 'compassoCreateDemoSession' | 'compassoCommand';
+interface ScriptRunner {
+  withSuccessHandler(callback: (value: unknown) => void): ScriptRunner;
+  withFailureHandler(callback: (error: unknown) => void): ScriptRunner;
+  compassoBootstrap(token: string): void;
+  compassoCreateDemoSession(previousToken?: string): void;
+  compassoCommand(token: string, commandJson: string): void;
+}
+interface GoogleRuntime { script?: { run?: ScriptRunner } }
+interface StoredSession { token: string; expiresAt?: string }
+
 export class ApiRequestError extends Error {
-  constructor(message: string, readonly kind: 'network' | 'http' | 'invalid-response', readonly status?: number) {
+  constructor(message: string, readonly kind: 'network' | 'server' | 'invalid-response' | 'unavailable', readonly status?: number) {
     super(message);
     this.name = 'ApiRequestError';
   }
 }
 
+const SESSION_KEY = 'compasso-google-session-v1';
+let session: StoredSession | null = null;
+let storageRead = false;
+let persistent = false;
 let requestQueue: Promise<unknown> = Promise.resolve();
 
-/** Serializa requisições, sem guardar alterações locais ou reenviá-las offline. */
-export function serializeRemoteOperation<T>(operation: () => Promise<T>): Promise<T> {
-  const execute = () => {
-    // Web Locks também evita que duas abas substituam o cache fora de ordem.
-    if (typeof navigator !== 'undefined' && navigator.locks?.request) {
-      return navigator.locks.request('compasso-academico-api', operation);
+function storage(): Storage | undefined {
+  try { return globalThis.localStorage; }
+  catch { return undefined; }
+}
+
+function validToken(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 16 && value.length <= 2048 && !/[\r\n]/.test(value);
+}
+
+function readSession(): StoredSession | null {
+  if (storageRead) return session;
+  storageRead = true;
+  try {
+    const source = storage();
+    if (!source) return null;
+    const raw = source.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const value: unknown = JSON.parse(raw);
+    if (value && typeof value === 'object' && validToken((value as StoredSession).token)) {
+      const found = value as StoredSession;
+      session = { token: found.token, ...(typeof found.expiresAt === 'string' ? { expiresAt: found.expiresAt } : {}) };
+      persistent = true;
     }
-    return operation();
-  };
-  const queued = requestQueue.then(execute, execute);
-  requestQueue = queued.then(() => undefined, () => undefined);
-  return queued;
+  } catch {
+    // O sandbox do HtmlService pode impedir acesso ao armazenamento do navegador.
+    persistent = false;
+  }
+  // A validade da sessão é sempre conferida pelo servidor, inclusive seu prazo.
+  return session;
+}
+
+function rememberSession(value: StateEnvelope): void {
+  if (!validToken(value.sessionToken) || typeof value.sessionExpiresAt !== 'string' || !Number.isFinite(Date.parse(value.sessionExpiresAt))) {
+    throw new ApiRequestError('O Apps Script não retornou uma sessão válida. Nenhum dado de exemplo foi criado no navegador.', 'invalid-response');
+  }
+  session = { token: value.sessionToken, expiresAt: value.sessionExpiresAt };
+  storageRead = true;
+  persistent = false;
+  try {
+    const target = storage();
+    if (target) {
+      target.setItem(SESSION_KEY, JSON.stringify(session));
+      persistent = true;
+    }
+  } catch {
+    // O token permanece apenas em memória; a interface informa essa limitação.
+  }
+}
+
+/** Retorna somente informações para a interface; nunca expõe o token em links ou avisos. */
+export function getSessionInfo(): { persistent: boolean; expiresAt?: string } {
+  readSession();
+  return { persistent, ...(session?.expiresAt ? { expiresAt: session.expiresAt } : {}) };
+}
+
+export function serializeRemoteOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const pending = requestQueue.then(operation, operation);
+  requestQueue = pending.then(() => undefined, () => undefined);
+  return pending;
 }
 
 function validEnvelope(value: unknown): value is StateEnvelope {
@@ -53,67 +117,83 @@ function validEnvelope(value: unknown): value is StateEnvelope {
       && typeof state.settings.exampleMode === 'boolean');
 }
 
-async function requestState<Result>(path: '/api/bootstrap' | '/api/demo-sessions' | '/api/commands', body?: object): Promise<StateEnvelope<Result>> {
+function decodeResponse<Result>(raw: unknown): StateEnvelope<Result> {
+  if (typeof raw !== 'string') throw new ApiRequestError('O Apps Script retornou uma resposta inválida.', 'invalid-response');
+  let value: unknown;
+  try { value = JSON.parse(raw); }
+  catch { throw new ApiRequestError('Não foi possível ler a resposta do Apps Script.', 'invalid-response'); }
+  if (value && typeof value === 'object' && typeof (value as { error?: unknown }).error === 'string') {
+    const error = value as { error: string; status?: unknown };
+    throw new ApiRequestError(error.error, 'server', Number.isInteger(error.status) ? Number(error.status) : 400);
+  }
+  if (!validEnvelope(value)) throw new ApiRequestError('A resposta do Apps Script está incompleta. Os dados exibidos foram preservados.', 'invalid-response');
+  return value as StateEnvelope<Result>;
+}
+
+function requestState<Result>(method: RpcMethod, args: string[]): Promise<StateEnvelope<Result>> {
+  const runtime = (globalThis as typeof globalThis & { google?: GoogleRuntime }).google;
+  const bridge = runtime?.script?.run;
+  if (!bridge) {
+    return Promise.reject(new ApiRequestError('Abra o Compasso pelo endereço de implantação do Google Apps Script. Esta página precisa desse ambiente para carregar e salvar os dados.', 'unavailable'));
+  }
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-    throw new ApiRequestError('Conecte-se à internet para consultar o servidor ou salvar alterações. Os dados já carregados continuam disponíveis para leitura.', 'network');
+    return Promise.reject(new ApiRequestError('Conecte-se à internet para carregar ou salvar os dados no Google Sheets.', 'network'));
   }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25_000);
-  try {
-    const response = await fetch(path, {
-      method: body === undefined ? 'GET' : 'POST',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      redirect: 'error',
-      headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: controller.signal,
-    });
-    let value: unknown;
-    try { value = await response.json(); }
-    catch { throw new ApiRequestError('O servidor não retornou uma resposta válida. Verifique se a API da demonstração está disponível.', 'invalid-response', response.status); }
-    if (!response.ok) {
-      const serverError = value && typeof value === 'object' ? (value as { error?: unknown }).error : undefined;
-      const message = typeof serverError === 'string' ? serverError : response.status === 401
-        ? 'A sessão de demonstração expirou. Atualize a página para iniciar uma nova sessão.'
-        : 'O servidor não conseguiu concluir a operação. Tente novamente.';
-      throw new ApiRequestError(message, 'http', response.status);
-    }
-    if (!validEnvelope(value)) {
-      throw new ApiRequestError('A resposta recebida está incompleta. Nenhum dado local foi alterado.', 'invalid-response', response.status);
-    }
-    return value as StateEnvelope<Result>;
-  } catch (error) {
-    if (error instanceof ApiRequestError) throw error;
-    throw new ApiRequestError('Não foi possível confirmar a operação no servidor. Conecte-se à internet e tente novamente; nenhuma alteração foi aplicada ao cache local.', 'network');
-  } finally {
-    clearTimeout(timeout);
-  }
+  return new Promise((resolve, reject) => {
+    let finished = false;
+    const fail = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      reject(new ApiRequestError('Não foi possível confirmar a operação no Apps Script. Verifique a conexão e tente novamente. Os dados exibidos não foram alterados.', 'network'));
+    };
+    const timeout = setTimeout(fail, 45_000);
+    const onSuccess = (raw: unknown) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      try { resolve(decodeResponse<Result>(raw)); }
+      catch (error) { reject(error); }
+    };
+    try {
+      const runner = bridge.withSuccessHandler(onSuccess).withFailureHandler(fail);
+      if (method === 'compassoBootstrap') runner.compassoBootstrap(args[0]);
+      else if (method === 'compassoCreateDemoSession') runner.compassoCreateDemoSession(args[0]);
+      else runner.compassoCommand(args[0], args[1]);
+    } catch { fail(); }
+  });
 }
 
 export function fetchBootstrap(): Promise<StateEnvelope> {
-  return requestState('/api/bootstrap');
+  return requestState('compassoBootstrap', [readSession()?.token ?? '']);
 }
 
-export function createDemoSession(): Promise<StateEnvelope> {
-  // O servidor gera os exemplos. Esta requisição não envia o cache do aparelho.
-  return requestState('/api/demo-sessions', {});
+export async function createDemoSession(options: { ignoreRejectedToken?: boolean } = {}): Promise<StateEnvelope> {
+  const previous = options.ignoreRejectedToken ? undefined : readSession()?.token;
+  const response = await requestState('compassoCreateDemoSession', previous ? [previous] : []);
+  // Mantém o token anterior até que a nova sessão seja confirmada pelo servidor.
+  rememberSession(response);
+  uncertainCommandIds.clear();
+  return response;
 }
 
 const uncertainCommandIds = new Map<string, string>();
 
 export async function sendCommand<Result>(type: AcademicCommandType, payload: object): Promise<StateEnvelope<Result>> {
+  const token = readSession()?.token;
+  if (!token) throw new ApiRequestError('A sessão de demonstração não está disponível. Reabra o aplicativo no Apps Script para continuar.', 'server', 401);
   const signature = JSON.stringify({ type, payload });
-  // Se a conexão cair após a gravação, uma repetição manual usa a mesma chave.
-  // Isso é somente memória da aba; não é fila de alterações offline.
+  // Uma repetição manual após falha usa o mesmo identificador; não há fila offline.
   const id = uncertainCommandIds.get(signature) ?? crypto.randomUUID();
   uncertainCommandIds.set(signature, id);
   try {
-    const response = await requestState<Result>('/api/commands', { id, type, payload });
+    const response = await requestState<Result>('compassoCommand', [token, JSON.stringify({ id, type, payload })]);
     uncertainCommandIds.delete(signature);
     return response;
   } catch (error) {
-    if (error instanceof ApiRequestError && error.kind !== 'network') uncertainCommandIds.delete(signature);
+    // Uma resposta ilegível também pode ocorrer depois de a operação ser salva.
+    // Somente uma rejeição explícita do servidor permite descartar a chave.
+    if (error instanceof ApiRequestError && error.kind === 'server' && (error.status ?? 500) < 500) uncertainCommandIds.delete(signature);
     throw error;
   }
 }

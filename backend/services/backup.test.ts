@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AppError } from '../contracts';
-import { parseBackup } from './backup';
+import { parseBackup, utf8ByteLength } from './backup';
 
 const time = '2026-11-01T00:00:00.000Z';
 
@@ -31,6 +31,11 @@ function fixture() {
 }
 
 describe('validação pura de cópias acadêmicas', () => {
+  it('conta bytes UTF-8 sem depender de APIs web no Apps Script', () => {
+    expect(utf8ByteLength('abc')).toBe(3);
+    expect(utf8ByteLength('Açã😀\ud800')).toBe(12);
+    expect(utf8ByteLength('')).toBe(0);
+  });
   it('faz roundtrip v2 preservando vínculos e snapshots, com cópias defensivas', () => {
     const backup = fixture();
     const parsed = parseBackup(JSON.stringify(backup), '2026-11-14');

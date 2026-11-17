@@ -81,6 +81,7 @@ Categoria -[hidden]down- Ocorrencia
 
 legend bottom
   Modelo resumido: mostra os campos e vínculos principais.
+  Dados usados na interface e no Google Apps Script.
   «interface» = formato dos dados no TypeScript; ? = campo opcional.
   1 = um | 0..1 = opcional | 0..* = zero ou vários.
 endlegend

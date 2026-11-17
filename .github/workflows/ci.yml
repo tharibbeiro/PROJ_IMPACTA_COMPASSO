@@ -1,4 +1,4 @@
-name: Verificar aplicação acadêmica
+name: Verificar Compasso Apps Script
 
 on:
   push:
@@ -27,5 +27,7 @@ jobs:
         run: npm ci
       - name: Executar testes
         run: npm test
-      - name: Compilar interface e servidor
+      - name: Gerar arquivos do Apps Script
         run: npm run build
+      - name: Conferir arquivos versionados do Apps Script
+        run: git diff --exit-code -- apps-script/

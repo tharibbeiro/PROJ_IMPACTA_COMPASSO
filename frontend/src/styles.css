@@ -21,3 +21,5 @@
 .card-payment-field{display:grid;gap:9px;padding:12px;border:1px solid #e3ebdc;background:#f7faf3;border-radius:8px}.card-payment-field .checkbox-row{font-size:12px;line-height:1.7;align-items:flex-start}.card-payment-field input{margin-top:3px!important;flex-shrink:0}.card-payment-field p{font-size:12px;line-height:1.85;color:#64725b}
 
 .academic-demo-banner{display:flex;align-items:center;gap:14px;padding:16px 18px;border:1px solid #cfdfe0;background:#edf5f3;border-radius:10px;margin-bottom:25px;color:#345f57}.academic-demo-banner>div{flex:1}.academic-demo-banner strong{font-size:14px}.academic-demo-banner p{font-size:12px;line-height:1.8;margin-top:4px;color:#526f66}.academic-demo-banner .text-button{font-size:12px}@media(max-width:640px){.academic-demo-banner{flex-wrap:wrap;gap:10px}.academic-demo-banner>div{flex-basis:calc(100% - 35px)}.academic-demo-banner>a{margin-left:30px}}
+
+.session-storage-note{margin:-9px 0 23px;padding:12px 15px;background:#faf6e9;border-color:#e9dfc2;color:#806d45}.session-storage-note p{font-size:12px;line-height:1.8}

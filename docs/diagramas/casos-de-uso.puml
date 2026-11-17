@@ -45,6 +45,6 @@ Usuario -- Backup
 Usuario -- Reiniciar
 
 legend bottom
-  Demonstração com dados fictícios e sessão individual, sem login.
+  Dados fictícios e sessão individual, sem login no aplicativo.
 endlegend
 @enduml

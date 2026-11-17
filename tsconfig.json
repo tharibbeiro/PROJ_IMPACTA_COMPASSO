@@ -15,16 +15,13 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "types": [
-      "node",
-      "vite/client"
+      "node"
     ]
   },
   "include": [
     "frontend/src",
     "backend",
     "shared",
-    "scripts/*.ts",
-    "vite.config.ts",
     "vitest.config.ts"
   ]
 }

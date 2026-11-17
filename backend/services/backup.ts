@@ -73,11 +73,22 @@ function parseSnapshot(value: unknown, plan: PlanItem, month: string): PlanningO
   return result;
 }
 
+/** Contagem UTF-8 portátil: Apps Script V8 não fornece TextEncoder. */
+export function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.codePointAt(index)!;
+    bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+    if (code > 0xffff) index++;
+  }
+  return bytes;
+}
+
 function parse(raw: unknown, today?: string): AcademicState {
   if (today !== undefined && !isValidDate(today)) throw new AppError('A data de referência para a importação é inválida.');
   let parsed = raw;
   if (typeof raw === 'string') {
-    if (new TextEncoder().encode(raw).byteLength > LIMITS.bytes) throw new AppError('A cópia de segurança deve ter até 2 MB.');
+    if (utf8ByteLength(raw) > LIMITS.bytes) throw new AppError('A cópia de segurança deve ter até 2 MB.');
     try { parsed = JSON.parse(raw); } catch { throw new AppError('Não foi possível ler o arquivo JSON.'); }
   }
   const backup = object(parsed);

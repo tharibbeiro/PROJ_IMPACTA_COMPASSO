@@ -1,6 +1,6 @@
 # Planejamento e movimentos reais
 
-O planejamento mostra a destinação prevista da renda mensal. Os lançamentos registram receitas, despesas e sua liquidação. Nesta demonstração, essas informações são validadas pela API e persistidas em SQL; o cache do navegador permite consulta, mas não aceita gravações sem conexão.
+O planejamento mostra a destinação prevista da renda mensal. Os lançamentos registram receitas, despesas e sua liquidação. Nesta demonstração, o servidor Apps Script valida essas informações e as grava nas abas do Google Sheets. As alterações dependem de conexão; os dados já carregados podem ser consultados na tela.
 
 ## Tipos de item
 

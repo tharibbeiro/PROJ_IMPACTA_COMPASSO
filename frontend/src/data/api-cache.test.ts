@@ -1,12 +1,14 @@
-import 'fake-indexeddb/auto';
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Entry, EntryInput } from '../domain/types';
-import type { AcademicState } from './api-client';
-import {
-  db, exportBackup, initialize, resetExampleData, restoreBackup, saveEntry, savePreferences, snapshot,
-} from './repository';
+import type { AcademicState, StateEnvelope } from './api-client';
 
-const timestamp = '2026-11-14T12:00:00.000Z';
+type RpcName = 'compassoBootstrap' | 'compassoCreateDemoSession' | 'compassoCommand';
+type RpcCall = { method: RpcName; args: Array<string | undefined> };
+type Handler = (call: RpcCall, success: (raw: unknown) => void, failure: () => void) => void;
+const TOKEN_A = 'sessao-ficticia-token-aaaaaaaaaaaaaaaa';
+const TOKEN_B = 'sessao-ficticia-token-bbbbbbbbbbbbbbbb';
+const EXPIRES_AT = '2030-01-01T12:00:00.000Z';
+const timestamp = '2026-11-17T12:00:00.000Z';
 const baseState = (): AcademicState => ({
   accounts: [{ id: 'demo-account', name: 'Conta fictícia', type: 'bank', openingBalanceCents: 0, createdAt: timestamp }],
   categories: [{ id: 'demo-category', name: 'Outros gastos', kind: 'expense', color: '#087f63' }],
@@ -14,127 +16,230 @@ const baseState = (): AcademicState => ({
 });
 const input: EntryInput = {
   description: 'Despesa fictícia', kind: 'expense', amountCents: 1234, accountId: 'demo-account', categoryId: 'demo-category',
-  occurredOn: '2026-11-14', dueOn: '2026-11-14', status: 'pending',
+  occurredOn: '2026-11-17', dueOn: '2026-11-17', status: 'pending',
 };
 const entry: Entry = { ...input, id: 'demo-entry', version: 1, createdAt: timestamp, updatedAt: timestamp };
-const response = (state = baseState(), revision = 0, result?: unknown) => new Response(JSON.stringify({ state, revision, result }), {
-  status: 200, headers: { 'Content-Type': 'application/json' },
-});
-const failure = (status: number, error: string) => new Response(JSON.stringify({ error }), {
-  status, headers: { 'Content-Type': 'application/json' },
-});
+const response = (state = baseState(), revision = 0, result?: unknown): StateEnvelope => ({ state, revision, result, database: 'Google Sheets', mode: 'demo' });
+const createdSession = (token = TOKEN_A, state = baseState(), revision = 0): StateEnvelope => ({ ...response(state, revision), sessionToken: token, sessionExpiresAt: EXPIRES_AT });
+let calls: RpcCall[];
+let handler: Handler;
+let values: Map<string, string>;
+let storage: Storage;
 
-let fetchMock = vi.fn<typeof fetch>();
-beforeEach(async () => {
-  await db.delete(); await db.open();
-  fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => response());
-  vi.stubGlobal('fetch', fetchMock);
+function runner(success: (raw: unknown) => void = () => {}, failure: () => void = () => {}): object {
+  const invoke = (method: RpcName, args: Array<string | undefined>) => {
+    const call = { method, args };
+    calls.push(call);
+    handler(call, success, failure);
+  };
+  return {
+    withSuccessHandler: (next: (raw: unknown) => void) => runner(next, failure),
+    withFailureHandler: (next: () => void) => runner(success, next),
+    compassoBootstrap: (token: string) => invoke('compassoBootstrap', [token]),
+    compassoCreateDemoSession: (token?: string) => invoke('compassoCreateDemoSession', [token]),
+    compassoCommand: (token: string, json: string) => invoke('compassoCommand', [token, json]),
+  };
+}
+
+beforeEach(() => {
+  vi.resetModules();
+  calls = []; values = new Map();
+  storage = {
+    get length() { return values.size; },
+    clear: () => values.clear(), key: (index) => [...values.keys()][index] ?? null,
+    getItem: (key) => values.get(key) ?? null,
+    removeItem: (key) => { values.delete(key); }, setItem: (key, value) => { values.set(key, value); },
+  };
+  handler = ({ method, args }, success) => {
+    if (method === 'compassoBootstrap') success(args[0] ? JSON.stringify(response()) : JSON.stringify({ error: 'Sessão ausente.', status: 401 }));
+    else if (method === 'compassoCreateDemoSession') success(JSON.stringify(createdSession()));
+    else success(JSON.stringify(response()));
+  };
+  vi.stubGlobal('localStorage', storage);
+  vi.stubGlobal('navigator', { onLine: true });
+  vi.stubGlobal('google', { script: { run: runner() } });
 });
 afterEach(() => { vi.unstubAllGlobals(); });
-afterAll(async () => { await db.delete(); });
 
-describe('adaptador HTTP e cache acadêmico', () => {
-  it('só confirma o lançamento no cache depois da resposta da API', async () => {
-    await initialize(); fetchMock.mockClear();
-    let finish!: (value: Response) => void;
-    let started!: () => void;
-    const requestStarted = new Promise<void>((resolve) => { started = resolve; });
-    fetchMock.mockImplementationOnce(() => { started(); return new Promise<Response>((resolve) => { finish = resolve; }); });
-    const saving = saveEntry(input);
-    await requestStarted;
-    expect((await snapshot()).entries).toHaveLength(0);
-    const updated = { ...baseState(), entries: [entry] };
-    finish(response(updated, 1, entry));
+describe('Apps Script: sessão e confirmação dos dados', () => {
+  it('orienta abrir a implantação quando google.script.run não existe, sem criar exemplos locais', async () => {
+    vi.stubGlobal('google', undefined);
+    const repository = await import('./repository');
+    await expect(repository.initialize()).rejects.toThrow(/endereço de implantação do Google Apps Script/);
+    await expect(repository.snapshot()).rejects.toThrow(/Apps Script/);
+    expect(calls).toHaveLength(0);
+    expect(values.size).toBe(0);
+  });
+
+  it('carrega os exemplos do servidor e guarda somente o token e seu prazo', async () => {
+    const repository = await import('./repository');
+    const api = await import('./api-client');
+    await repository.initialize();
+    expect(calls.map((call) => call.method)).toEqual(['compassoBootstrap', 'compassoCreateDemoSession']);
+    expect((await repository.snapshot()).accounts[0].name).toBe('Conta fictícia');
+    expect(api.getSessionInfo()).toEqual({ persistent: true, expiresAt: EXPIRES_AT });
+    expect(JSON.parse(storage.getItem('compasso-google-session-v1')!)).toEqual({ token: TOKEN_A, expiresAt: EXPIRES_AT });
+    expect(values.size).toBe(1);
+    expect([...values.values()].join('')).not.toContain('Conta fictícia');
+  });
+
+  it('recupera uma sessão persistida e envia o token apenas como argumento RPC', async () => {
+    storage.setItem('compasso-google-session-v1', JSON.stringify({ token: TOKEN_A, expiresAt: EXPIRES_AT }));
+    const repository = await import('./repository');
+    await repository.initialize();
+    expect(calls).toEqual([{ method: 'compassoBootstrap', args: [TOKEN_A] }]);
+    expect((await repository.snapshot()).settings.displayName).toBe('Demonstração');
+  });
+
+  it('mantém a sessão em memória quando o sandbox bloqueia o armazenamento', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem() { throw new Error('Armazenamento bloqueado.'); },
+      setItem() { throw new Error('Armazenamento bloqueado.'); },
+    });
+    const repository = await import('./repository');
+    const api = await import('./api-client');
+    await repository.initialize();
+    expect(api.getSessionInfo().persistent).toBe(false);
+    handler = (_call, success) => success(JSON.stringify(response({ ...baseState(), entries: [entry] }, 1, entry)));
+    await expect(repository.saveEntry(input)).resolves.toEqual(entry);
+    expect(calls.at(-1)?.args[0]).toBe(TOKEN_A);
+    expect((await repository.snapshot()).entries).toEqual([entry]);
+  });
+
+  it('atualiza a cópia em memória e os assinantes somente após a confirmação do servidor', async () => {
+    const repository = await import('./repository');
+    await repository.initialize();
+    let confirm!: (raw: unknown) => void;
+    handler = (_call, success) => { confirm = success; };
+    const notified = vi.fn();
+    const unsubscribe = repository.subscribeState(notified);
+    const saving = repository.saveEntry(input);
+    await vi.waitFor(() => expect(confirm).toBeTypeOf('function'));
+    expect((await repository.snapshot()).entries).toHaveLength(0);
+    expect(notified).not.toHaveBeenCalled();
+    confirm(JSON.stringify(response({ ...baseState(), entries: [entry] }, 1, entry)));
     await expect(saving).resolves.toEqual(entry);
-    expect((await snapshot()).entries).toEqual([entry]);
-    expect(await db.operations.count()).toBe(0);
-    const [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe('/api/commands');
-    expect(options?.credentials).toBe('same-origin');
-    expect(JSON.parse(String(options?.body))).toMatchObject({ type: 'saveEntry', payload: { input } });
+    expect((await repository.snapshot()).entries).toEqual([entry]);
+    expect(notified).toHaveBeenCalledTimes(1);
+    unsubscribe();
   });
 
-  it('sem conexão mantém leitura do cache e rejeita alterações', async () => {
-    await initialize();
-    fetchMock.mockRejectedValue(new TypeError('Network unavailable'));
-    await expect(initialize()).resolves.toBeUndefined();
-    expect((await snapshot()).accounts[0].name).toBe('Conta fictícia');
-    await expect(saveEntry(input)).rejects.toThrow(/internet/);
-    expect((await snapshot()).entries).toHaveLength(0);
-    expect(await db.operations.count()).toBe(0);
+  it('preserva os registros quando o callback de falha da rede é acionado', async () => {
+    const repository = await import('./repository');
+    await repository.initialize();
+    handler = (_call, _success, failure) => failure();
+    await expect(repository.saveEntry(input)).rejects.toThrow(/conexão/);
+    expect((await repository.snapshot()).entries).toHaveLength(0);
   });
 
-  it('não cria dados locais quando o primeiro acesso ao servidor falha', async () => {
-    fetchMock.mockRejectedValue(new TypeError('Network unavailable'));
-    await expect(initialize()).rejects.toThrow(/internet/);
-    expect(await db.accounts.count()).toBe(0);
-    expect(await db.settings.count()).toBe(0);
-    await expect(snapshot()).rejects.toThrow(/primeira vez/);
+  it('reutiliza o UUID após falha incerta e cria outro depois da confirmação', async () => {
+    const repository = await import('./repository');
+    await repository.initialize();
+    handler = (_call, _success, failure) => failure();
+    await expect(repository.saveEntry(input)).rejects.toThrow(/conexão/);
+    const first = JSON.parse(calls.at(-1)!.args[1]!);
+    handler = (_call, success) => success(JSON.stringify(response({ ...baseState(), entries: [entry] }, 1, entry)));
+    await repository.saveEntry(input);
+    const second = JSON.parse(calls.at(-1)!.args[1]!);
+    expect(second.id).toBe(first.id);
+    await repository.saveEntry(input);
+    const third = JSON.parse(calls.at(-1)!.args[1]!);
+    expect(third.id).not.toBe(first.id);
   });
 
-  it('cria a sessão remota após 401 e não reapresenta cache anterior se a criação falhar', async () => {
-    await initialize(); fetchMock.mockClear();
-    fetchMock.mockResolvedValueOnce(failure(401, 'Sessão ausente')).mockRejectedValueOnce(new TypeError('Network unavailable'));
-    await expect(initialize()).rejects.toThrow(/internet/);
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(['/api/bootstrap', '/api/demo-sessions']);
-    fetchMock.mockResolvedValueOnce(failure(401, 'Sessão ausente')).mockResolvedValueOnce(response());
-    await expect(initialize()).resolves.toBeUndefined();
-  });
-
-  it('não substitui revisão mais nova por uma resposta antiga', async () => {
-    fetchMock.mockResolvedValueOnce(response(baseState(), 5));
-    await initialize();
+  it('não substitui uma revisão recente por resposta antiga', async () => {
+    handler = ({ method }, success) => success(JSON.stringify(method === 'compassoBootstrap' ? { error: 'Sem sessão', status: 401 } : createdSession(TOKEN_A, baseState(), 5)));
+    const repository = await import('./repository');
+    await repository.initialize();
     const older = baseState(); older.settings.displayName = 'Resposta antiga';
-    fetchMock.mockResolvedValueOnce(response(older, 4));
-    await savePreferences({ displayName: 'Resposta antiga' });
-    expect((await snapshot()).settings.displayName).toBe('Demonstração');
-    expect((await db.metadata.get('server'))?.revision).toBe(5);
+    handler = (_call, success) => success(JSON.stringify(response(older, 4)));
+    await repository.savePreferences({ displayName: 'Resposta antiga' });
+    expect((await repository.snapshot()).settings.displayName).toBe('Demonstração');
   });
 
-  it('serializa alterações e aplica cada resposta antes de iniciar a próxima', async () => {
-    await initialize(); fetchMock.mockClear();
-    let finish!: (value: Response) => void;
-    let started!: () => void;
-    const requestStarted = new Promise<void>((resolve) => { started = resolve; });
-    fetchMock.mockImplementationOnce(() => { started(); return new Promise<Response>((resolve) => { finish = resolve; }); });
-    const first = savePreferences({ displayName: 'Primeira alteração' });
-    const second = savePreferences({ displayName: 'Segunda alteração' });
-    await requestStarted;
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+  it('mantém a chave de idempotência se a resposta chegar ilegível', async () => {
+    const repository = await import('./repository');
+    await repository.initialize();
+    handler = (_call, success) => success('resposta truncada');
+    await expect(repository.saveEntry(input)).rejects.toThrow(/resposta/);
+    const first = JSON.parse(calls.at(-1)!.args[1]!);
+    handler = (_call, success) => success(JSON.stringify(response({ ...baseState(), entries: [entry] }, 1, entry)));
+    await repository.saveEntry(input);
+    expect(JSON.parse(calls.at(-1)!.args[1]!).id).toBe(first.id);
+    expect((await repository.snapshot()).entries).toHaveLength(1);
+  });
+
+  it('serializa os comandos antes de substituir o estado confirmado', async () => {
+    const repository = await import('./repository');
+    await repository.initialize();
+    calls = [];
+    let finish!: (raw: unknown) => void;
+    handler = (_call, success) => { finish = success; };
+    const first = repository.savePreferences({ displayName: 'Primeira alteração' });
+    const second = repository.savePreferences({ displayName: 'Segunda alteração' });
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    expect(calls).toHaveLength(1);
     const stateOne = baseState(); stateOne.settings.displayName = 'Primeira alteração';
     const stateTwo = baseState(); stateTwo.settings.displayName = 'Segunda alteração';
-    fetchMock.mockResolvedValueOnce(response(stateTwo, 2));
-    finish(response(stateOne, 1));
+    handler = (_call, success) => success(JSON.stringify(response(stateTwo, 2)));
+    finish(JSON.stringify(response(stateOne, 1)));
     await Promise.all([first, second]);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect((await snapshot()).settings.displayName).toBe('Segunda alteração');
+    expect(calls).toHaveLength(2);
+    expect((await repository.snapshot()).settings.displayName).toBe('Segunda alteração');
   });
 
-  it('rejeita cópias pessoais antes de qualquer envio HTTP', async () => {
-    await initialize(); fetchMock.mockClear();
-    await expect(restoreBackup(JSON.stringify({ application: 'compasso-financas', version: 2, entries: [{ description: 'Dados pessoais' }] })))
-      .rejects.toThrow(/Cópias pessoais/);
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(JSON.parse(await exportBackup()).application).toBe('compasso-academico');
-  });
-
-  it('reinicia exemplos por nova sessão no servidor, sem enviar o cache', async () => {
-    fetchMock.mockResolvedValueOnce(response(baseState(), 9));
-    await initialize(); fetchMock.mockClear();
+  it('troca a sessão somente quando o reset remoto é bem-sucedido', async () => {
+    const repository = await import('./repository');
+    await repository.initialize();
+    handler = (_call, _success, failure) => failure();
+    await expect(repository.resetExampleData()).rejects.toThrow(/conexão/);
+    expect(calls.at(-1)).toEqual({ method: 'compassoCreateDemoSession', args: [TOKEN_A] });
+    expect(JSON.parse(storage.getItem('compasso-google-session-v1')!).token).toBe(TOKEN_A);
     const fresh = baseState(); fresh.settings.displayName = 'Nova demonstração';
-    fetchMock.mockResolvedValueOnce(response(fresh, 0));
-    await resetExampleData();
-    const [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe('/api/demo-sessions');
-    expect(JSON.parse(String(options?.body))).toEqual({});
-    expect((await snapshot()).settings.displayName).toBe('Nova demonstração');
-    expect((await db.metadata.get('server'))?.revision).toBe(0);
+    handler = (_call, success) => success(JSON.stringify(createdSession(TOKEN_B, fresh, 0)));
+    await repository.resetExampleData();
+    expect(JSON.parse(storage.getItem('compasso-google-session-v1')!).token).toBe(TOKEN_B);
+    expect((await repository.snapshot()).settings.displayName).toBe('Nova demonstração');
   });
 
-  it('preserva o cache quando o servidor rejeita a alteração', async () => {
-    await initialize();
-    fetchMock.mockResolvedValueOnce(failure(409, 'O registro foi alterado. Atualize antes de salvar.'));
-    await expect(saveEntry(input)).rejects.toThrow(/foi alterado/);
-    expect((await snapshot()).entries).toHaveLength(0);
+  it('renova uma sessão expirada conforme a resposta do servidor', async () => {
+    storage.setItem('compasso-google-session-v1', JSON.stringify({ token: TOKEN_A, expiresAt: EXPIRES_AT }));
+    handler = ({ method }, success) => success(JSON.stringify(method === 'compassoBootstrap'
+      ? { error: 'A sessão expirou.', status: 401 } : createdSession(TOKEN_B)));
+    const repository = await import('./repository');
+    await repository.initialize();
+    expect(calls).toEqual([
+      { method: 'compassoBootstrap', args: [TOKEN_A] },
+      { method: 'compassoCreateDemoSession', args: [undefined] },
+    ]);
+    expect(JSON.parse(storage.getItem('compasso-google-session-v1')!).token).toBe(TOKEN_B);
+  });
+
+  it('rejeita cópias pessoais antes do RPC e exporta sem incluir o token', async () => {
+    const repository = await import('./repository');
+    await repository.initialize(); calls = [];
+    await expect(repository.restoreBackup(JSON.stringify({ application: 'compasso-financas', version: 2 }))).rejects.toThrow(/Cópias pessoais/);
+    expect(calls).toHaveLength(0);
+    const backup = await repository.exportBackup();
+    expect(JSON.parse(backup).application).toBe('compasso-academico');
+    expect(backup).not.toContain(TOKEN_A);
+    expect(backup).not.toContain('sessionToken');
+  });
+
+  it('exige internet e não cria alterações offline', async () => {
+    const repository = await import('./repository');
+    await repository.initialize(); calls = [];
+    vi.stubGlobal('navigator', { onLine: false });
+    await expect(repository.saveEntry(input)).rejects.toThrow(/internet/);
+    expect(calls).toHaveLength(0);
+    expect((await repository.snapshot()).entries).toHaveLength(0);
+  });
+
+  it('propaga conflito do servidor sem alterar os dados em memória', async () => {
+    const repository = await import('./repository');
+    await repository.initialize();
+    handler = (_call, success) => success(JSON.stringify({ error: 'Este registro foi alterado.', status: 409 }));
+    await expect(repository.saveEntry(input)).rejects.toMatchObject({ status: 409, message: 'Este registro foi alterado.' });
+    expect((await repository.snapshot()).entries).toHaveLength(0);
   });
 });

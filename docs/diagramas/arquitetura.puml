@@ -17,15 +17,15 @@ skinparam dpi 120
 
 title Compasso Acadêmico\nAs três camadas do projeto
 
-rectangle "1. Interface\nReact\nTelas e formulários" as Interface #E7F4EF
-rectangle "2. API\nTypeScript + Hono\nRegras e validações" as API #EAF1F8
-database "3. Banco de dados\nSQLite / Cloudflare D1\nInformações salvas" as Banco #FFF4DF
+rectangle "1. Interface\nReact + HTML + CSS\nIndex.html / HtmlService" as Interface #E7F4EF
+rectangle "2. Aplicação\nGoogle Apps Script\nRegras e validações" as Aplicacao #EAF1F8
+database "3. Dados\nGoogle Sheets\nAbas da planilha privada" as Dados #FFF4DF
 
-Interface <--> API : pedidos e respostas
-API <--> Banco : leitura e gravação
+Interface <--> Aplicacao : google.script.run
+Aplicacao <--> Dados : leitura e gravação
 
 legend bottom
-  Sem internet, o navegador permite consultar a cópia local.
-  Alterações precisam de conexão e confirmação da API.
+  A interface chama as funções do Apps Script, que validam as operações e salvam os dados.
+  A planilha é acessada pelo servidor; a aplicação precisa de conexão com a internet.
 endlegend
 @enduml

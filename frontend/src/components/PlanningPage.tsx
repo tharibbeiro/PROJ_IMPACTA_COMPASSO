@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { liveQuery } from 'dexie';
 import {
   ArchiveX, ArrowDownLeft, ArrowRight, Banknote, CalendarDays, Check,
   CheckCircle2, ChevronLeft, ChevronRight, Clock3, CreditCard,
@@ -12,6 +11,7 @@ import type { PlanInput, PlanItem, PlanningRow, PlanningSnapshot } from '../doma
 import { formatMoney, localDate, parseMoney } from '../domain/finance';
 import { monthlyPlanningSummary, rowsForMonth } from '../domain/planning';
 import { deletePlan, getPlanningSnapshot, linkPlanEntry, savePlan, setPlanningChecked, settlePlan } from '../data/planning-repository';
+import { subscribeState } from '../data/repository';
 import './planning.css';
 
 interface PlanningPageProps {
@@ -134,7 +134,7 @@ function PlanForm({ editor, month, accounts, categories, onClose, onSaved }: {
     {existing && <p className="planning-edit-note">As mudanças ajustam as previsões. Pagamentos e recebimentos já registrados mantêm seu histórico.</p>}
     <p className="planning-field-help">Vencimentos em dias que não existem no mês usam o último dia disponível.</p>
     {error && <p className="form-error" role="alert">{error}</p>}
-    <p className="form-note"><HardDrive size={14} />Alterações confirmadas pela API e salvas no banco SQL.</p>
+    <p className="form-note"><HardDrive size={14} />Alterações salvas pelo Apps Script no Google Sheets.</p>
     <div className="modal-actions"><button type="button" className="button secondary" disabled={saving} onClick={onClose}>Cancelar</button><button type="submit" className="button primary" disabled={saving}>{saving ? 'Salvando…' : existing ? 'Salvar previsão' : 'Adicionar ao planejamento'}</button></div>
   </form>;
 }
@@ -202,11 +202,14 @@ export default function PlanningPage({ month, onMonthChange, accounts, categorie
   const [collapsed, setCollapsed] = useState<Set<PlanType>>(new Set());
   const [showInactive, setShowInactive] = useState(false);
   useEffect(() => {
-    const subscription = liveQuery(getPlanningSnapshot).subscribe({
-      next: (value) => { setData(value); setLoadError(''); },
-      error: (error) => setLoadError(errorText(error)),
-    });
-    return () => subscription.unsubscribe();
+    let cancelled = false;
+    const read = async () => {
+      try { const value = await getPlanningSnapshot(); if (!cancelled) { setData(value); setLoadError(''); } }
+      catch (error) { if (!cancelled) setLoadError(errorText(error)); }
+    };
+    const unsubscribe = subscribeState(() => { void read(); });
+    void read();
+    return () => { cancelled = true; unsubscribe(); };
   }, []);
   const rows = useMemo(() => data ? rowsForMonth(data.plans, data.occurrences, entries, month) : [], [data, entries, month]);
   const summary = useMemo(() => data ? monthlyPlanningSummary(data.plans, data.occurrences, entries, month) : null, [data, entries, month]);
@@ -287,7 +290,7 @@ export default function PlanningPage({ month, onMonthChange, accounts, categorie
 
     {inactivePlans.length > 0 && <section className="panel planning-inactive"><button type="button" className="planning-inactive-toggle" aria-expanded={showInactive} aria-controls="planning-inactive-list" onClick={() => setShowInactive(!showInactive)}><Clock3 size={17} /><span>Outros itens cadastrados<strong>{inactivePlans.length}</strong></span><ChevronRight className={showInactive ? 'is-open' : ''} size={16} /></button>{showInactive && <div id="planning-inactive-list"><p>Itens futuros, encerrados ou sem vencimento no mês selecionado.</p>{inactivePlans.map((plan) => <div className="planning-inactive-row" key={plan.id}><span><strong>{plan.description}</strong><small>{GROUPS.find((group) => group.type === plan.type)?.title} · {plan.archived ? 'Previsão encerrada' : `Início em ${monthLabel(plan.startMonth)}`}</small></span><strong>{formatMoney(plan.amountCents)}</strong><button type="button" className="icon-button" disabled={plan.archived} title={plan.archived ? 'Previsão encerrada; cadastre outra para retomar' : 'Editar previsão'} aria-label={`Editar previsão: ${plan.description}`} onClick={() => setEditor({ plan, type: plan.type })}><Pencil size={14} /></button>{!plan.archived && <button type="button" className="icon-button planning-end-button" aria-label={`Encerrar previsão: ${plan.description}`} onClick={() => setEnding(plan)}><ArchiveX size={15} /></button>}</div>)}</div>}</section>}
 
-    <p className="planning-bottom-note"><HardDrive size={14} />O planejamento é salvo no banco SQL da demonstração; alterações exigem conexão.</p>
+    <p className="planning-bottom-note"><HardDrive size={14} />O planejamento é salvo no Google Sheets. É preciso internet para carregar e salvar os dados.</p>
     {editor && <PlanningDialog title={editor.plan ? 'Editar previsão' : 'Adicionar ao planejamento'} wide onClose={() => setEditor(null)}><PlanForm editor={editor} month={month} accounts={accounts} categories={categories} onClose={() => setEditor(null)} onSaved={(plan) => { setEditor(null); if (!editor.plan && plan.startMonth !== month) onMonthChange(plan.startMonth); onNotify(editor.plan ? 'Previsão atualizada. Registros realizados foram preservados.' : 'Item adicionado ao planejamento.'); }} /></PlanningDialog>}
     {settlement && <PlanningDialog title={settlement.plan.type === 'salary' ? 'Registrar recebimento' : 'Registrar pagamento'} onClose={() => setSettlement(null)}><SettlementForm row={settlement} accounts={accounts} candidates={entries.filter((entry) => entry.kind === (settlement.plan.type === 'salary' ? 'income' : 'expense') && entry.occurredOn.startsWith(`${month}-`) && !entry.planId && !data.occurrences.some((occurrence) => occurrence.linkedEntryId === entry.id)).sort((a, b) => Math.abs(a.amountCents - settlement.amountCents) - Math.abs(b.amountCents - settlement.amountCents) || a.occurredOn.localeCompare(b.occurredOn))} onClose={() => setSettlement(null)} onSaved={(result) => { const income = settlement.plan.type === 'salary'; setSettlement(null); onNotify(result === 'linked' ? 'Lançamento vinculado ao planejamento, sem criar duplicação.' : income ? 'Recebimento registrado e saldo atualizado.' : 'Pagamento registrado e saldo atualizado.'); }} /></PlanningDialog>}
     {ending && <PlanningDialog title="Encerrar previsão?" onClose={() => setEnding(null)}><EndPlanForm plan={ending} month={month} onClose={() => setEnding(null)} onSaved={() => { setEnding(null); onNotify('Previsão encerrada a partir deste mês. Histórico preservado.'); }} /></PlanningDialog>}
