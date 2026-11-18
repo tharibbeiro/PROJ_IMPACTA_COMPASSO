@@ -158,7 +158,11 @@ function requestState<Result>(method: RpcMethod, args: string[]): Promise<StateE
     try {
       const runner = bridge.withSuccessHandler(onSuccess).withFailureHandler(fail);
       if (method === 'compassoBootstrap') runner.compassoBootstrap(args[0]);
-      else if (method === 'compassoCreateDemoSession') runner.compassoCreateDemoSession(args[0]);
+      else if (method === 'compassoCreateDemoSession') {
+        // Um argumento undefined pode virar null no transporte do Google.
+        if (args.length) runner.compassoCreateDemoSession(args[0]);
+        else runner.compassoCreateDemoSession();
+      }
       else runner.compassoCommand(args[0], args[1]);
     } catch { fail(); }
   });

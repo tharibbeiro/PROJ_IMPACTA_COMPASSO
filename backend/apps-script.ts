@@ -123,9 +123,10 @@ export function createAppsScriptController(runtime: AppsScriptRuntime, clock: ()
       return response(loaded.state, loaded.revision, session.expiresAt);
     }),
 
-    createDemoSession: (previousToken?: string): string => locked(() => {
+    createDemoSession: (previousToken?: unknown): string => locked(() => {
       const { repository: repo, port } = repository();
-      const previous = previousToken === undefined ? undefined : authenticate(repo, previousToken);
+      // Clientes sem sessão podem enviar null pelo transporte do Apps Script.
+      const previous = previousToken === undefined || previousToken === null ? undefined : authenticate(repo, previousToken);
       repo.cleanupExpired();
       const active = port.read('Sessoes').slice(1).filter((row) => row[5] === 'active' && Date.parse(String(row[4])) > clock().getTime()).length;
       if (active - (previous ? 1 : 0) >= MAX_ACTIVE_SESSIONS) throw new AppError('A demonstração atingiu o limite de sessões ativas. Tente novamente mais tarde.', 429);
@@ -173,5 +174,5 @@ function defaultCall(work: (controller: ReturnType<typeof createAppsScriptContro
 
 export function configurar(): string { return defaultCall((controller) => controller.configurar()); }
 export function bootstrap(token: string): string { return defaultCall((controller) => controller.bootstrap(token)); }
-export function createDemoSession(previousToken?: string): string { return defaultCall((controller) => controller.createDemoSession(previousToken)); }
+export function createDemoSession(previousToken?: string | null): string { return defaultCall((controller) => controller.createDemoSession(previousToken)); }
 export function command(token: string, commandJson: string): string { return defaultCall((controller) => controller.command(token, commandJson)); }

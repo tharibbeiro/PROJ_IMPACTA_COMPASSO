@@ -62,6 +62,19 @@ describe('controlador síncrono Apps Script', () => {
     expect(decoded(fixture.controller.createDemoSession()).sessionToken).toBeDefined();
   });
 
+  it('aceita null como argumento ausente do transporte sem invalidar sessões existentes', () => {
+    const { controller } = configured();
+    const first = decoded(controller.createDemoSession());
+    const fresh = decoded(controller.createDemoSession(null));
+    expect(fresh.sessionToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(fresh.sessionToken).not.toBe(first.sessionToken);
+    expect(decoded(controller.bootstrap(first.sessionToken!)).state).toBeDefined();
+    expect(decoded(controller.bootstrap(fresh.sessionToken!)).state).toBeDefined();
+    for (const invalid of ['', 0, false, {}]) {
+      expect(decoded(controller.createDemoSession(invalid)).status).toBe(401);
+    }
+  });
+
   it('reinicia somente a própria sessão após gravar a nova com sucesso', () => {
     const fixture = configured();
     const first = decoded(fixture.controller.createDemoSession());

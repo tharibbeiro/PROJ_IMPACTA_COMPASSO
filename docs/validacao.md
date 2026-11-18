@@ -16,7 +16,7 @@ npm test
 | Regras financeiras | Criação e edição, pagamentos, vínculos do planejamento e histórico. |
 | Cópias de segurança | Formato, valores e referências antes da restauração. |
 | Repositório de planilha | Sessões, revisões, confirmação de versões e reenvio de comandos. |
-| Comunicação | Chamadas do cliente e respostas de sucesso ou erro. |
+| Comunicação | Chamadas do cliente, primeiro acesso e recuperação de sessão com serialização de argumentos, além de respostas de sucesso ou erro. |
 
 Os testes locais usam substitutos dos serviços do Google. Eles permitem verificar as regras e o comportamento do código, mas não representam uma execução real na conta Google nem uma implantação publicada.
 

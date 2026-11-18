@@ -1338,7 +1338,7 @@ var CompassoBackend_ = (() => {
       }),
       createDemoSession: (previousToken) => locked(() => {
         const { repository: repo, port } = repository();
-        const previous = previousToken === void 0 ? void 0 : authenticate(repo, previousToken);
+        const previous = previousToken === void 0 || previousToken === null ? void 0 : authenticate(repo, previousToken);
         repo.cleanupExpired();
         const active = port.read("Sessoes").slice(1).filter((row) => row[5] === "active" && Date.parse(String(row[4])) > clock().getTime()).length;
         if (active - (previous ? 1 : 0) >= MAX_ACTIVE_SESSIONS) throw new AppError("A demonstração atingiu o limite de sessões ativas. Tente novamente mais tarde.", 429);

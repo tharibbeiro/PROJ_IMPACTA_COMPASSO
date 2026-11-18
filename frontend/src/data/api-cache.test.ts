@@ -3,7 +3,7 @@ import type { Entry, EntryInput } from '../domain/types';
 import type { AcademicState, StateEnvelope } from './api-client';
 
 type RpcName = 'compassoBootstrap' | 'compassoCreateDemoSession' | 'compassoCommand';
-type RpcCall = { method: RpcName; args: Array<string | undefined> };
+type RpcCall = { method: RpcName; args: Array<string | null> };
 type Handler = (call: RpcCall, success: (raw: unknown) => void, failure: () => void) => void;
 const TOKEN_A = 'sessao-ficticia-token-aaaaaaaaaaaaaaaa';
 const TOKEN_B = 'sessao-ficticia-token-bbbbbbbbbbbbbbbb';
@@ -28,7 +28,7 @@ let storage: Storage;
 
 function runner(success: (raw: unknown) => void = () => {}, failure: () => void = () => {}): object {
   const invoke = (method: RpcName, args: Array<string | undefined>) => {
-    const call = { method, args };
+    const call: RpcCall = { method, args: JSON.parse(JSON.stringify(args)) as Array<string | null> };
     calls.push(call);
     handler(call, success, failure);
   };
@@ -36,7 +36,7 @@ function runner(success: (raw: unknown) => void = () => {}, failure: () => void 
     withSuccessHandler: (next: (raw: unknown) => void) => runner(next, failure),
     withFailureHandler: (next: () => void) => runner(success, next),
     compassoBootstrap: (token: string) => invoke('compassoBootstrap', [token]),
-    compassoCreateDemoSession: (token?: string) => invoke('compassoCreateDemoSession', [token]),
+    compassoCreateDemoSession: (...tokens: string[]) => invoke('compassoCreateDemoSession', tokens),
     compassoCommand: (token: string, json: string) => invoke('compassoCommand', [token, json]),
   };
 }
@@ -210,7 +210,7 @@ describe('Apps Script: sessão e confirmação dos dados', () => {
     await repository.initialize();
     expect(calls).toEqual([
       { method: 'compassoBootstrap', args: [TOKEN_A] },
-      { method: 'compassoCreateDemoSession', args: [undefined] },
+      { method: 'compassoCreateDemoSession', args: [] },
     ]);
     expect(JSON.parse(storage.getItem('compasso-google-session-v1')!).token).toBe(TOKEN_B);
   });
