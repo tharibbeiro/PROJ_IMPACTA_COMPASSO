@@ -59,7 +59,7 @@ beforeEach(() => {
   vi.stubGlobal('navigator', { onLine: true });
   vi.stubGlobal('google', { script: { run: runner() } });
 });
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('Apps Script: sessão e confirmação dos dados', () => {
   it('orienta abrir a implantação quando google.script.run não existe, sem criar exemplos locais', async () => {
@@ -145,6 +145,39 @@ describe('Apps Script: sessão e confirmação dos dados', () => {
     await repository.saveEntry(input);
     const third = JSON.parse(calls.at(-1)!.args[1]!);
     expect(third.id).not.toBe(first.id);
+  });
+
+  it('aguarda confirmação de gravação que ultrapassa os 45 segundos anteriores', async () => {
+    const repository = await import('./repository');
+    await repository.initialize();
+    vi.useFakeTimers();
+    let confirm!: (raw: unknown) => void;
+    handler = (_call, success) => { confirm = success; };
+    let completed = false;
+    const saving = repository.saveEntry(input).then((value) => { completed = true; return value; });
+    await vi.advanceTimersByTimeAsync(45_001);
+    expect(completed).toBe(false);
+    expect((await repository.snapshot()).entries).toHaveLength(0);
+    confirm(JSON.stringify(response({ ...baseState(), entries: [entry] }, 1, entry)));
+    await expect(saving).resolves.toEqual(entry);
+    expect((await repository.snapshot()).entries).toEqual([entry]);
+  });
+
+  it('mantém a tentativa após prazo de confirmação e reconhece o reenvio sem duplicação', async () => {
+    const repository = await import('./repository');
+    await repository.initialize(); calls = [];
+    vi.useFakeTimers();
+    handler = () => {};
+    const saving = repository.saveEntry(input);
+    const rejection = expect(saving).rejects.toThrow(/pode ter sido concluída/);
+    await vi.advanceTimersByTimeAsync(90_001);
+    await rejection;
+    const previousId = JSON.parse(calls[0].args[1]! as string).id;
+    expect((await repository.snapshot()).entries).toHaveLength(0);
+    handler = (_call, success) => success(JSON.stringify(response({ ...baseState(), entries: [entry] }, 1, entry)));
+    await repository.saveEntry(input);
+    expect(JSON.parse(calls.at(-1)!.args[1]! as string).id).toBe(previousId);
+    expect((await repository.snapshot()).entries).toEqual([entry]);
   });
 
   it('não substitui uma revisão recente por resposta antiga', async () => {

@@ -15,6 +15,17 @@ O planejamento mostra a destinação prevista da renda mensal. Os lançamentos r
 
 Quando o dia escolhido não existe no mês, o calendário usa o último dia real. Não há ajuste automático por feriado ou dia útil.
 
+## Datas e confirmação no formulário
+
+A previsão usa um único campo com dia, mês e ano. Essa data define o primeiro vencimento e o dia da repetição mensal; compromissos anuais repetem o mês e o dia nos anos seguintes. O último mês, quando informado, limita a repetição. Ao editar um item com dia 31 cujo primeiro mês tem menos dias, salvar sem alterar a data conserva a regra original do dia 31.
+
+O formulário permite marcar **Já recebido**, **Já pago**, **Já conferido na fatura** ou **Valor já separado**, conforme o tipo. Pagamentos e recebimentos usam um campo de data completo, que não aceita data futura. Cartões e reservas usam somente a conferência e não criam um movimento bancário.
+
+Na inclusão, a confirmação pertence ao mês da primeira data escolhida. Na edição, ela pertence ao mês consultado no painel, mesmo quando o recebimento ou pagamento ocorreu em outro mês. A interface pede uma confirmação adicional quando as datas pertencem a meses diferentes.
+
+A previsão e uma eventual alteração da confirmação são enviadas em um único comando e gravadas juntas. Se qualquer validação falhar, nenhuma das duas alterações é aplicada. Ao editar somente a previsão, o estado do pagamento existente não é reenviado. Alterar explicitamente a data ou desmarcar um pagamento atualiza o lançamento vinculado, sem criar outro; seus valores, descrição e vencimento continuam preservados.
+
+
 ## Evitar duplicações
 
 Cada item bancário tem no máximo um lançamento vinculado por mês. O usuário pode registrar um novo pagamento/recebimento ou escolher um lançamento compatível já existente. Vincular um lançamento pendente não o transforma em pago.

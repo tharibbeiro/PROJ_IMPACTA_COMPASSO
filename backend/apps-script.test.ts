@@ -86,6 +86,26 @@ describe('controlador síncrono Apps Script', () => {
     expect(decoded(fixture.controller.bootstrap(replacement.sessionToken!)).state).toBeDefined();
   });
 
+  it('relê fisicamente a revisão antes de publicar, mesmo com dados em cache', () => {
+    const fixture = configured();
+    const initial = decoded(fixture.controller.createDemoSession());
+    const sessions = fixture.spreadsheet.getSheetByName('Sessoes')!;
+    const originalPointer = JSON.parse(String(sessions.rows[1][2]));
+    const previousWrite = fixture.spreadsheet.beforeWrite;
+    fixture.spreadsheet.beforeWrite = (write) => {
+      previousWrite?.(write);
+      if (write.sheet === 'Comandos' && write.row > 2) {
+        sessions.rows[1][2] = JSON.stringify({ ...originalPointer, revision: 1 });
+      }
+    };
+    const result = decoded(fixture.controller.command(initial.sessionToken!, JSON.stringify({
+      id: 'command-external-revision-01', type: 'savePreferences', payload: { input: { displayName: 'Não sobrescrever revisão' } },
+    })));
+    expect(result.status).toBe(409);
+    expect(JSON.parse(String(sessions.rows[1][2]))).toEqual({ ...originalPointer, revision: 1 });
+    expect(fixture.stats().locked).toBe(false);
+  });
+
   it('falha de staging não publica revisão nem responde sucesso', () => {
     const fixture = configured();
     const initial = decoded(fixture.controller.createDemoSession());
@@ -111,5 +131,40 @@ describe('controlador síncrono Apps Script', () => {
     expect(decoded(fixture.controller.command(initial.sessionToken!, JSON.stringify(command))).status).toBe(503);
     expect(decoded(fixture.controller.bootstrap(initial.sessionToken!)).revision).toBe(0);
     expect(fixture.stats().locked).toBe(false);
+  });
+});
+
+
+describe('custo de acesso à planilha por comando', () => {
+  it('rejeita um token ausente antes de abrir ou ler as abas', () => {
+    const fixture = configured();
+    fixture.spreadsheet.resetCalls();
+    expect(decoded(fixture.controller.bootstrap('')).status).toBe(401);
+    expect(decoded(fixture.controller.createDemoSession('inválido')).status).toBe(401);
+    expect(decoded(fixture.controller.command('', '{}')).status).toBe(401);
+    expect(fixture.spreadsheet.calls).toEqual({});
+    expect(fixture.stats().locked).toBe(false);
+  });
+
+  it.each(['updateAccount', 'saveEntry'] as const)('%s evita reler as mesmas abas durante a gravação', (type) => {
+    const fixture = configured();
+    const initial = decoded(fixture.controller.createDemoSession());
+    const state = initial.state!;
+    const payload = type === 'updateAccount'
+      ? { id: state.accounts[0].id, input: { name: 'Conta editada', type: 'bank', openingBalanceCents: 126000 } }
+      : { input: { description: 'Despesa de teste', kind: 'expense', amountCents: 1250, accountId: state.accounts[0].id, categoryId: state.categories.find((item) => item.kind === 'expense')!.id, occurredOn: '2026-11-17', dueOn: '2026-11-17', status: 'pending' } };
+    fixture.spreadsheet.resetCalls();
+    const flushBefore = fixture.stats().flushCount;
+    const result = decoded(fixture.controller.command(initial.sessionToken!, JSON.stringify({ id: `command-performance-${type}`, type, payload })));
+    expect(result.revision).toBe(1);
+    // Oito abas, mais uma releitura física de Sessoes antes de publicar o ponteiro.
+    expect(fixture.spreadsheet.calls.getValues).toBeLessThanOrEqual(9);
+    expect(fixture.spreadsheet.calls.getSheetByName).toBeLessThanOrEqual(9);
+    expect(Object.values(fixture.spreadsheet.calls).reduce((sum, count) => sum + count, 0)).toBeLessThanOrEqual(90);
+    expect(fixture.stats().flushCount - flushBefore).toBe(2);
+    fixture.spreadsheet.resetCalls();
+    const loaded = decoded(fixture.controller.bootstrap(initial.sessionToken!));
+    expect(loaded.revision).toBe(1);
+    expect(fixture.spreadsheet.calls.getValues).toBe(8);
   });
 });

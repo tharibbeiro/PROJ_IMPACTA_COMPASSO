@@ -13,18 +13,21 @@ export class FakeGoogleSheet implements GoogleSheet {
   constructor(public name: string, private readonly spreadsheet: FakeGoogleSpreadsheet) {}
   getName(): string { return this.name; }
   setName(name: string): void { this.name = name; }
-  getLastRow(): number { return this.rows.length; }
-  getLastColumn(): number { return Math.max(0, ...this.rows.map((row) => row.length)); }
-  getMaxRows(): number { return this.maxRows; }
-  getMaxColumns(): number { return this.maxColumns; }
-  insertRowsAfter(_position: number, count: number): void { this.maxRows += count; }
-  insertColumnsAfter(_position: number, count: number): void { this.maxColumns += count; }
-  deleteRows(row: number, count: number): void { this.rows.splice(row - 1, count); }
+  getLastRow(): number { this.spreadsheet.record('getLastRow'); return this.rows.length; }
+  getLastColumn(): number { this.spreadsheet.record('getLastColumn'); return Math.max(0, ...this.rows.map((row) => row.length)); }
+  getMaxRows(): number { this.spreadsheet.record('getMaxRows'); return this.maxRows; }
+  getMaxColumns(): number { this.spreadsheet.record('getMaxColumns'); return this.maxColumns; }
+  insertRowsAfter(_position: number, count: number): void { this.spreadsheet.record('insertRowsAfter'); this.maxRows += count; }
+  insertColumnsAfter(_position: number, count: number): void { this.spreadsheet.record('insertColumnsAfter'); this.maxColumns += count; }
+  deleteRows(row: number, count: number): void { this.spreadsheet.record('deleteRows'); this.rows.splice(row - 1, count); this.maxRows -= count; }
   getRange(row: number, column: number, rows: number, columns: number): GoogleRange {
+    this.spreadsheet.record('getRange');
+    if (![row, column, rows, columns].every((value) => Number.isInteger(value) && value > 0) || row + rows - 1 > this.maxRows || column + columns - 1 > this.maxColumns) throw new Error('Intervalo fora da capacidade física da aba');
     return {
-      getValues: () => Array.from({ length: rows }, (_, y) => Array.from({ length: columns }, (_, x) => this.rows[row + y - 1]?.[column + x - 1] ?? '')),
-      setNumberFormat: (format) => { this.formats.push(format); },
+      getValues: () => { this.spreadsheet.record('getValues'); return Array.from({ length: rows }, (_, y) => Array.from({ length: columns }, (_, x) => this.rows[row + y - 1]?.[column + x - 1] ?? '')); },
+      setNumberFormat: (format) => { this.spreadsheet.record('setNumberFormat'); this.formats.push(format); },
       setValues: (values) => {
+        this.spreadsheet.record('setValues');
         const write: FakeWrite = { sheet: this.name, row, column, values: structuredClone(values) };
         this.spreadsheet.beforeWrite?.(write);
         this.spreadsheet.writes.push(write);
@@ -36,6 +39,7 @@ export class FakeGoogleSheet implements GoogleSheet {
             this.rows[index][column + x - 1] = typeof value === 'string' && value.startsWith("'") ? value.slice(1) : value;
           });
         });
+        this.spreadsheet.afterWrite?.(write);
       },
     };
   }
@@ -45,11 +49,15 @@ export class FakeGoogleSpreadsheet implements GoogleSpreadsheet {
   sheets: FakeGoogleSheet[] = [new FakeGoogleSheet('Página1', this)];
   writes: FakeWrite[] = [];
   beforeWrite?: (write: FakeWrite) => void;
+  afterWrite?: (write: FakeWrite) => void;
+  calls: Record<string, number> = {};
+  record(name: string): void { this.calls[name] = (this.calls[name] ?? 0) + 1; }
+  resetCalls(): void { this.calls = {}; }
   getId(): string { return 'spreadsheet-owner-only'; }
   getUrl(): string { return `https://docs.google.com/spreadsheets/d/${this.getId()}/edit`; }
   getSheets(): FakeGoogleSheet[] { return this.sheets; }
-  getSheetByName(name: string): FakeGoogleSheet | null { return this.sheets.find((sheet) => sheet.name === name) ?? null; }
-  insertSheet(name: string): FakeGoogleSheet { const sheet = new FakeGoogleSheet(name, this); this.sheets.push(sheet); return sheet; }
+  getSheetByName(name: string): FakeGoogleSheet | null { this.record('getSheetByName'); return this.sheets.find((sheet) => sheet.name === name) ?? null; }
+  insertSheet(name: string): FakeGoogleSheet { this.record('insertSheet'); const sheet = new FakeGoogleSheet(name, this); this.sheets.push(sheet); return sheet; }
 }
 
 export function runtimeFixture() {

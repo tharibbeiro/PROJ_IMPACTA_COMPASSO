@@ -24,6 +24,14 @@ export interface PlanItem {
 
 export type PlanInput = Omit<PlanItem, 'id' | 'createdAt' | 'updatedAt' | 'version' | 'archived' | 'archivedFromMonth'>;
 
+/** Confirmação do mês, enviada junto da previsão em uma única operação. */
+export interface PlanCompletionInput {
+  month: string;
+  completed: boolean;
+  paidOn?: string;
+  expectedEntryVersion?: number;
+}
+
 export interface PlanningOccurrenceSnapshot {
   type: PlanType;
   description: string;

@@ -4,7 +4,7 @@ A demonstração acadêmica usa uma planilha privada do proprietário do Google 
 
 ## Configuração pelo proprietário
 
-Execute `configurarCompasso_` no editor do Apps Script. A função cria **Compasso — Demonstração**, prepara as oito abas e grava o identificador na propriedade de script `COMPASSO_SPREADSHEET_ID`. Executá-la novamente reutiliza a planilha existente e verifica seus cabeçalhos. O código não compartilha a planilha nem recebe identificadores de planilha do navegador.
+Configure a planilha pelo [procedimento de publicação](../docs/publicacao.md), que executa `configurarCompasso_` por uma função temporária no editor do Apps Script. A função cria **Compasso — Demonstração**, prepara as oito abas e grava o identificador na propriedade de script `COMPASSO_SPREADSHEET_ID`. Executá-la novamente reutiliza a planilha existente e verifica seus cabeçalhos. O código não compartilha a planilha nem recebe identificadores de planilha do navegador.
 
 Os visitantes acessam somente as funções públicas `compassoBootstrap`, `compassoCreateDemoSession` e `compassoCommand`. A configuração termina em `_`, permanecendo privada para `google.script.run`.
 
@@ -42,6 +42,12 @@ Leituras filtram simultaneamente a sessão, o snapshot e a revisão ativos. Uma 
 Uma falha depois da troca do ponteiro pode deixar o comando aplicado sem confirmação no navegador. A resposta é um erro, e o cliente deve repetir **o mesmo identificador de comando**. A consulta de idempotência retorna o resultado já publicado, sem reaplicar o movimento. O sistema não promete reverter uma gravação já publicada.
 
 O lock coordena as execuções deste script. Alterações manuais na planilha não participam desse protocolo; preserve os cabeçalhos e use a aplicação para editar os registros.
+
+## Leituras durante uma operação
+
+A porta mantém uma cópia dos dados, das abas e de suas dimensões somente durante a chamada atual. A leitura de cada aba é reaproveitada pelas validações e pelos cálculos, e as escritas atualizam essa cópia. Ela é descartada ao final da requisição e invalidada quando uma escrita ou um `flush()` falha.
+
+Antes de trocar o ponteiro, o repositório relê fisicamente `Sessoes` e confere a revisão. As duas confirmações por `flush()` e a proteção por lock continuam sendo aplicadas. A cadeia de comandos usa um índice em memória para localizar seus snapshots sem varrer todas as linhas a cada etapa; registros fora da cadeia confirmada continuam ignorados.
 
 ## Idempotência e tentativas interrompidas
 

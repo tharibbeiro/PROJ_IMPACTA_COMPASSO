@@ -13,10 +13,10 @@ npm test
 | Área | Comportamentos |
 | --- | --- |
 | Cálculos | Centavos inteiros, datas, saldos, períodos e parcelas. |
-| Regras financeiras | Criação e edição, pagamentos, vínculos do planejamento e histórico. |
+| Regras financeiras | Criação e edição, pagamento junto à previsão em um único comando, vínculos do planejamento e preservação do histórico. |
 | Cópias de segurança | Formato, valores e referências antes da restauração. |
-| Repositório de planilha | Sessões, revisões, confirmação de versões e reenvio de comandos. |
-| Comunicação | Chamadas do cliente, primeiro acesso e recuperação de sessão com serialização de argumentos, além de respostas de sucesso ou erro. |
+| Repositório de planilha | Sessões, revisões, confirmação de versões, reenvio de comandos e cache de leituras restrito à requisição. |
+| Comunicação | Primeiro acesso, recuperação de sessão, confirmação lenta de gravação e reenvio após prazo esgotado sem duplicação. |
 
 Os testes locais usam substitutos dos serviços do Google. Eles permitem verificar as regras e o comportamento do código, mas não representam uma execução real na conta Google nem uma implantação publicada.
 

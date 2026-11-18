@@ -500,9 +500,12 @@ var CompassoBackend_ = (() => {
             this.checkLimits(restored);
             return { state: restored, result: void 0 };
           }
-          case "savePlan":
-            result = this.savePlan(state, payload.input, optionalId(payload.id), payload.expectedVersion);
+          case "savePlan": {
+            const plan = this.savePlan(state, payload.input, optionalId(payload.id), payload.expectedVersion);
+            if (payload.completion !== void 0) this.applyPlanCompletion(state, plan, payload.completion);
+            result = plan;
             break;
+          }
           case "deletePlan":
             result = this.deletePlan(state, text3(payload.id, "Planejamento", 100), payload.expectedVersion, month((_a = payload.fromMonth) != null ? _a : this.today().slice(0, 7)));
             break;
@@ -700,6 +703,36 @@ var CompassoBackend_ = (() => {
       else state.plans.push(plan);
       return plan;
     }
+    applyPlanCompletion(state, plan, raw) {
+      const completion = object2(raw, "Confirmação do planejamento");
+      const selectedMonth = month(completion.month);
+      if (typeof completion.completed !== "boolean") throw new AppError("Informe se o item já foi concluído.", 400);
+      if (!rowsForMonth([plan], state.occurrences, state.entries, selectedMonth).length) {
+        throw new AppError("Este compromisso não possui previsão no mês da confirmação.", 400);
+      }
+      if (!bankPlan(plan)) {
+        if (completion.paidOn !== void 0 || completion.expectedEntryVersion !== void 0) {
+          throw new AppError("Itens de cartão e reservas são conferidos sem registrar pagamento bancário.", 400);
+        }
+        this.setPlanningChecked(state, plan.id, selectedMonth, completion.completed);
+        return;
+      }
+      const paidOn = completion.paidOn;
+      if (completion.completed && (!isValidDate(paidOn) || paidOn > this.today())) {
+        throw new AppError("Informe uma data de pagamento ou recebimento válida, até hoje.", 400);
+      }
+      if (!completion.completed && paidOn !== void 0) throw new AppError("Um item pendente não deve informar data de pagamento.", 400);
+      const entry = this.findPlanEntry(state, plan.id, selectedMonth);
+      if (!entry) {
+        if (completion.expectedEntryVersion !== void 0) throw new AppError("O lançamento vinculado foi alterado. Atualize os dados antes de continuar.", 409);
+        if (completion.completed) this.settlePlan(state, plan.id, selectedMonth, { paidOn });
+        return;
+      }
+      requireVersion(entry.version, completion.expectedEntryVersion);
+      const status = completion.completed ? "paid" : "pending";
+      if (entry.status === status && (!completion.completed || entry.paidOn === paidOn)) return;
+      this.saveEntry(state, { ...entry, status, ...completion.completed ? { paidOn } : {} }, entry.id, entry.version);
+    }
     deletePlan(state, id, expectedVersion, fromMonth) {
       const plan = this.plan(state, id);
       requireVersion(plan.version, expectedVersion);
@@ -833,63 +866,139 @@ var CompassoBackend_ = (() => {
     }) {
       this.spreadsheet = spreadsheet;
       this.flushWrites = flushWrites;
+      __publicField(this, "cache", /* @__PURE__ */ new Map());
     }
     flush() {
-      this.flushWrites();
+      try {
+        this.flushWrites();
+      } catch (error) {
+        this.cache.clear();
+        throw error;
+      }
     }
-    read(name) {
-      const sheet = this.sheet(name);
-      const rows = sheet.getLastRow();
-      const columns = sheet.getLastColumn();
-      if (!rows || !columns) return [];
-      return sheet.getRange(1, 1, rows, columns).getValues().map((row) => row.map((value) => {
-        if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") throw new AppError("A planilha contém um valor incompatível. Preserve as datas e os identificadores como texto.", 503);
-        return value;
-      }));
+    read(name, options = {}) {
+      var _a, _b;
+      if (options.fresh) this.cache.delete(name);
+      const state = this.sheet(name);
+      if (!state.values) {
+        const rows = (_a = state.lastRow) != null ? _a : state.lastRow = state.sheet.getLastRow();
+        const columns = (_b = state.lastColumn) != null ? _b : state.lastColumn = state.sheet.getLastColumn();
+        state.values = !rows || !columns ? [] : state.sheet.getRange(1, 1, rows, columns).getValues().map((row) => row.map((value) => {
+          if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") throw new AppError("A planilha contém um valor incompatível. Preserve as datas e os identificadores como texto.", 503);
+          return value;
+        }));
+      }
+      return state.values.map((row) => [...row]);
     }
     append(name, rows) {
       if (!rows.length) return;
       const columns = rows[0].length;
       if (!columns || rows.some((row) => row.length !== columns)) throw new AppError("As linhas da planilha possuem formatos incompatíveis.", 500);
-      const sheet = this.sheet(name);
-      const start = sheet.getLastRow() + 1;
-      this.capacity(sheet, start + rows.length - 1, columns);
-      const range = sheet.getRange(start, 1, rows.length, columns);
-      range.setNumberFormat("@");
-      range.setValues(rows.map((row) => row.map(literalCell)));
+      this.mutate(name, (state) => {
+        var _a;
+        const start = ((_a = state.lastRow) != null ? _a : state.lastRow = state.sheet.getLastRow()) + 1;
+        this.capacity(state, start + rows.length - 1, columns);
+        const range = state.sheet.getRange(start, 1, rows.length, columns);
+        range.setNumberFormat("@");
+        range.setValues(rows.map((row) => row.map(literalCell)));
+        if (state.values) {
+          state.values.push(...rows.map((row) => [...row]));
+          this.normalize(state);
+        } else {
+          state.lastRow = void 0;
+          state.lastColumn = void 0;
+        }
+      });
     }
     replaceCell(name, row, column, value) {
-      const sheet = this.sheet(name);
-      this.capacity(sheet, row, column);
-      const range = sheet.getRange(row, column, 1, 1);
-      range.setNumberFormat("@");
-      range.setValues([[literalCell(value)]]);
+      this.mutate(name, (state) => {
+        this.capacity(state, row, column);
+        const range = state.sheet.getRange(row, column, 1, 1);
+        range.setNumberFormat("@");
+        range.setValues([[literalCell(value)]]);
+        if (state.values) {
+          while (state.values.length < row) state.values.push([]);
+          state.values[row - 1][column - 1] = value;
+          this.normalize(state);
+        } else {
+          state.lastRow = void 0;
+          state.lastColumn = void 0;
+        }
+      });
     }
     ensureSheet(name, headers) {
-      let sheet = this.spreadsheet.getSheetByName(name);
-      if (!sheet) sheet = this.spreadsheet.insertSheet(name);
-      if (!sheet.getLastRow()) {
+      var _a;
+      if (!this.cache.has(name)) {
+        const sheet = (_a = this.spreadsheet.getSheetByName(name)) != null ? _a : this.spreadsheet.insertSheet(name);
+        this.cache.set(name, { sheet });
+      }
+      const values = this.read(name);
+      if (!values.length) {
         this.append(name, [[...headers]]);
         return;
       }
-      this.capacity(sheet, 1, headers.length);
-      const actual = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+      const actual = values[0];
       if (headers.some((header, index) => actual[index] !== header)) throw new AppError(`Os cabeçalhos da aba ${name} foram alterados. Restaure a estrutura configurada antes de continuar.`, 503);
     }
     deleteRows(name, row, count) {
       if (row < 2 || !Number.isInteger(row) || !Number.isInteger(count) || count < 1) throw new AppError("A limpeza da planilha recebeu linhas inválidas.", 500);
-      this.sheet(name).deleteRows(row, count);
+      this.mutate(name, (state) => {
+        state.sheet.deleteRows(row, count);
+        if (state.maxRows !== void 0) state.maxRows -= count;
+        if (state.values) {
+          state.values.splice(row - 1, count);
+          this.normalize(state);
+        } else {
+          state.lastRow = void 0;
+          state.lastColumn = void 0;
+        }
+      });
     }
     sheet(name) {
+      const cached = this.cache.get(name);
+      if (cached) return cached;
       const sheet = this.spreadsheet.getSheetByName(name);
       if (!sheet) throw new AppError("A planilha ainda não está configurada. Execute configurarCompasso_ no editor do Apps Script.", 503);
-      return sheet;
+      const state = { sheet };
+      this.cache.set(name, state);
+      return state;
     }
-    capacity(sheet, rows, columns) {
-      const maxRows = sheet.getMaxRows();
-      const maxColumns = sheet.getMaxColumns();
-      if (rows > maxRows) sheet.insertRowsAfter(maxRows, rows - maxRows);
-      if (columns > maxColumns) sheet.insertColumnsAfter(maxColumns, columns - maxColumns);
+    mutate(name, operation) {
+      try {
+        operation(this.sheet(name));
+      } catch (error) {
+        this.cache.delete(name);
+        throw error;
+      }
+    }
+    capacity(state, rows, columns) {
+      var _a, _b;
+      const maxRows = (_a = state.maxRows) != null ? _a : state.maxRows = state.sheet.getMaxRows();
+      const maxColumns = (_b = state.maxColumns) != null ? _b : state.maxColumns = state.sheet.getMaxColumns();
+      if (rows > maxRows) {
+        state.sheet.insertRowsAfter(maxRows, rows - maxRows);
+        state.maxRows = rows;
+      }
+      if (columns > maxColumns) {
+        state.sheet.insertColumnsAfter(maxColumns, columns - maxColumns);
+        state.maxColumns = columns;
+      }
+    }
+    normalize(state) {
+      const values = state.values;
+      while (values.length && values[values.length - 1].every((cell) => cell === "" || cell === void 0)) values.pop();
+      let columns = 0;
+      for (const row of values) {
+        let last = row.length;
+        while (last && (row[last - 1] === "" || row[last - 1] === void 0)) last--;
+        columns = Math.max(columns, last);
+      }
+      state.values = values.map((row) => Array.from({ length: columns }, (_, index) => {
+        var _a;
+        return (_a = row[index]) != null ? _a : "";
+      }));
+      state.lastRow = values.length;
+      state.lastColumn = columns;
     }
   };
 
@@ -1033,8 +1142,8 @@ var CompassoBackend_ = (() => {
       this.uuid = uuid;
       for (const [name, headers] of Object.entries(SHEET_HEADERS)) this.port.ensureSheet(name, headers);
     }
-    rows(name) {
-      const values = this.port.read(name);
+    rows(name, fresh = false) {
+      const values = this.port.read(name, { fresh });
       const headers = SHEET_HEADERS[name];
       if (!values.length || headers.some((header, index) => values[0][index] !== header)) throw storageError();
       return values.slice(1).map((cells, index) => ({ cells, row: index + 2 })).filter(({ cells }) => cells.some((cell) => cell !== ""));
@@ -1044,8 +1153,8 @@ var CompassoBackend_ = (() => {
       if (!Number.isFinite(now.getTime())) throw new AppError("O relógio da demonstração está indisponível.", 500);
       return now;
     }
-    sessionRecords() {
-      return this.rows("Sessoes").map(({ row, cells }) => {
+    sessionRecords(fresh = false) {
+      return this.rows("Sessoes", fresh).map(({ row, cells }) => {
         const commit = pointer(cells[2]);
         return {
           id: string(cells[0]),
@@ -1064,8 +1173,8 @@ var CompassoBackend_ = (() => {
       if (!Number.isFinite(expiry)) throw storageError();
       return session.status === "active" && expiry > this.now().getTime();
     }
-    activeSession(id) {
-      const matches = this.sessionRecords().filter((session2) => session2.id === id);
+    activeSession(id, fresh = false) {
+      const matches = this.sessionRecords(fresh).filter((session2) => session2.id === id);
       if (matches.length > 1) throw storageError();
       const session = matches[0];
       if (!session || !this.isActive(session)) throw new AppError("Sua sessão de demonstração expirou. Inicie outra demonstração.", 401);
@@ -1075,14 +1184,22 @@ var CompassoBackend_ = (() => {
       return { id: session.id, revision: session.revision, createdAt: session.createdAt, expiresAt: session.expiresAt };
     }
     commandChain(session) {
+      var _a;
       const commands = this.rows("Comandos").filter(({ cells }) => cells[0] === session.id);
+      const bySnapshot = /* @__PURE__ */ new Map();
+      for (const row of commands) {
+        const key = row.cells[1];
+        const bucket = bySnapshot.get(key);
+        if (bucket) bucket.push(row);
+        else bySnapshot.set(key, [row]);
+      }
       const chain = [];
       const visited = /* @__PURE__ */ new Set();
       let selected = session.pointer;
       while (true) {
         if (visited.has(selected.snapshotId)) throw storageError();
         visited.add(selected.snapshotId);
-        const matches = commands.filter(({ cells: cells2 }) => cells2[1] === selected.snapshotId && number(cells2[2]) === selected.revision);
+        const matches = ((_a = bySnapshot.get(selected.snapshotId)) != null ? _a : []).filter(({ cells: cells2 }) => number(cells2[2]) === selected.revision);
         if (matches.length !== 1) throw storageError();
         const cells = matches[0].cells;
         const command2 = {
@@ -1196,7 +1313,7 @@ var CompassoBackend_ = (() => {
       this.appendSnapshot(sessionId, next.snapshotId, next.revision, after);
       this.port.append("Comandos", [[sessionId, next.snapshotId, next.revision, session.pointer.snapshotId, commandId, resultJson, this.now().toISOString(), fingerprint != null ? fingerprint : ""]]);
       this.port.flush();
-      const latest = this.activeSession(sessionId);
+      const latest = this.activeSession(sessionId, true);
       if (latest.revision !== expectedRevision || latest.pointer.snapshotId !== session.pointer.snapshotId) return { applied: false, revision: latest.revision };
       this.port.replaceCell("Sessoes", latest.row, 3, JSON.stringify(next));
       this.port.flush();
@@ -1301,9 +1418,12 @@ var CompassoBackend_ = (() => {
       const port = new AppsScriptSheetPort(spreadsheet, () => runtime2.SpreadsheetApp.flush());
       return { repository: new SheetsFinanceRepository(port, clock, () => runtime2.Utilities.getUuid()), port };
     };
-    const authenticate = (repo, token) => {
+    const validatedToken = (token) => {
       if (typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token)) throw new AppError("A sessão de demonstração é inválida ou expirou. Inicie uma nova demonstração.", 401);
-      const session = repo.findSession(hash(token));
+      return token;
+    };
+    const authenticate = (repo, token) => {
+      const session = repo.findSession(hash(validatedToken(token)));
       if (!session || Date.parse(session.expiresAt) <= clock().getTime()) throw new AppError("A sessão de demonstração é inválida ou expirou. Inicie uma nova demonstração.", 401);
       return session;
     };
@@ -1331,12 +1451,14 @@ var CompassoBackend_ = (() => {
         return { configured: true, spreadsheetUrl: spreadsheet.getUrl(), database: "Google Sheets" };
       }),
       bootstrap: (token) => locked(() => {
+        validatedToken(token);
         const { repository: repo } = repository();
         const session = authenticate(repo, token);
         const loaded = repo.load(session.id);
         return response(loaded.state, loaded.revision, session.expiresAt);
       }),
       createDemoSession: (previousToken) => locked(() => {
+        if (previousToken !== void 0 && previousToken !== null) validatedToken(previousToken);
         const { repository: repo, port } = repository();
         const previous = previousToken === void 0 || previousToken === null ? void 0 : authenticate(repo, previousToken);
         repo.cleanupExpired();
@@ -1351,6 +1473,7 @@ var CompassoBackend_ = (() => {
       }),
       command: (token, commandJson) => locked(() => {
         var _a, _b;
+        validatedToken(token);
         const { repository: repo } = repository();
         const session = authenticate(repo, token);
         const command2 = parseCommand(commandJson);

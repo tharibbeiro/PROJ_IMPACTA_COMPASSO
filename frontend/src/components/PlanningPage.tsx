@@ -7,9 +7,9 @@ import {
   Sparkles, Wallet, X,
 } from 'lucide-react';
 import type { Account, Category, Entry } from '../domain/types';
-import type { PlanInput, PlanItem, PlanningRow, PlanningSnapshot } from '../domain/planning-types';
-import { formatMoney, localDate, parseMoney } from '../domain/finance';
-import { monthlyPlanningSummary, rowsForMonth } from '../domain/planning';
+import type { PlanCompletionInput, PlanInput, PlanItem, PlanOccurrence, PlanningRow, PlanningSnapshot } from '../domain/planning-types';
+import { formatMoney, isValidDate, localDate, parseMoney } from '../domain/finance';
+import { dueDateForMonth, isValidMonth, monthlyPlanningSummary, rowsForMonth } from '../domain/planning';
 import { deletePlan, getPlanningSnapshot, linkPlanEntry, savePlan, setPlanningChecked, settlePlan } from '../data/planning-repository';
 import { subscribeState } from '../data/repository';
 import './planning.css';
@@ -62,16 +62,31 @@ function PlanningDialog({ title, children, onClose, wide = false }: { title: str
   </dialog>;
 }
 
-function PlanForm({ editor, month, accounts, categories, onClose, onSaved }: {
-  editor: PlanEditor; month: string; accounts: Account[]; categories: Category[];
+function PlanForm({ editor, month, accounts, categories, entries, occurrences, onClose, onSaved }: {
+  editor: PlanEditor; month: string; accounts: Account[]; categories: Category[]; entries: Entry[]; occurrences: PlanOccurrence[];
   onClose: () => void; onSaved: (plan: PlanItem) => void;
 }) {
   const existing = editor.plan;
   const [type, setType] = useState<PlanType>(existing?.type ?? editor.type);
   const [description, setDescription] = useState(existing?.description ?? '');
   const [amount, setAmount] = useState(existing ? inputMoney(existing.amountCents) : '');
-  const [startMonth, setStartMonth] = useState(existing?.startMonth ?? month);
-  const [dueDay, setDueDay] = useState(String(existing?.dueDay ?? 5));
+  const [forecastDate, setForecastDate] = useState(() => dueDateForMonth(existing?.startMonth ?? month, existing?.dueDay ?? 5));
+  const [forecastDateChanged, setForecastDateChanged] = useState(false);
+  const startMonth = forecastDate.slice(0, 7);
+  // Mantém dias como 31 quando a data inicial foi limitada por um mês curto.
+  const dueDay = existing && !forecastDateChanged ? existing.dueDay : Number(forecastDate.slice(8));
+  const [initialCompletion] = useState(() => {
+    const row = existing ? rowsForMonth([existing], occurrences, entries, month)[0] : undefined;
+    const entry = row?.linkedEntry;
+    return {
+      completed: existing && isCashPlan(existing.type) ? entry?.status === 'paid' : row?.occurrence?.status === 'done',
+      paidOn: entry?.paidOn ?? localDate(),
+      entryVersion: entry?.version,
+    };
+  });
+  const [completed, setCompleted] = useState(Boolean(initialCompletion.completed));
+  const [paidOn, setPaidOn] = useState(initialCompletion.paidOn);
+  const [confirmedDate, setConfirmedDate] = useState(false);
   const [endMonth, setEndMonth] = useState(existing?.endMonth ?? '');
   const [accountId, setAccountId] = useState(existing?.accountId ?? accounts[0]?.id ?? '');
   const defaultCategory = (value: PlanType) => value === 'salary'
@@ -84,6 +99,11 @@ function PlanForm({ editor, month, accounts, categories, onClose, onSaved }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const cash = isCashPlan(type);
+  const completionMonth = existing ? month : startMonth;
+  const completionChanged = completed !== Boolean(initialCompletion.completed) || (cash && completed && paidOn !== initialCompletion.paidOn);
+  const validCompletionMonth = isValidMonth(completionMonth);
+  const outsideMonth = cash && completed && validCompletionMonth && paidOn.slice(0, 7) !== completionMonth;
+  const completionLabel = type === 'salary' ? 'Já recebido' : cash ? 'Já pago' : type === 'reserve' ? 'Valor já separado' : 'Já conferido na fatura';
   const matchingCategories = categories.filter((c) => c.kind === (type === 'salary' ? 'income' : 'expense'));
   const lastInstallmentMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(startMonth)
     && Number.isInteger(Number(installmentNumber)) && Number.isInteger(Number(totalInstallments))
@@ -94,6 +114,7 @@ function PlanForm({ editor, month, accounts, categories, onClose, onSaved }: {
   function changeType(value: PlanType) {
     setType(value);
     setCategoryId(defaultCategory(value));
+    setCompleted(false); setPaidOn(localDate()); setConfirmedDate(false);
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -101,13 +122,21 @@ function PlanForm({ editor, month, accounts, categories, onClose, onSaved }: {
     setSaving(true); setError('');
     try {
       const input: PlanInput = {
-        type, description, amountCents: parseMoney(amount), startMonth, dueDay: Number(dueDay),
+        type, description, amountCents: parseMoney(amount), startMonth, dueDay,
         ...(endMonth && type !== 'installment' ? { endMonth } : {}),
         ...(cash ? { accountId, categoryId } : {}),
         ...(isCardPlan(type) ? { cardName } : {}),
         ...(type === 'installment' ? { installmentNumber: Number(installmentNumber), totalInstallments: Number(totalInstallments) } : {}),
       };
-      const saved = await savePlan(input, existing?.id, existing?.version);
+      if (!isValidDate(forecastDate)) throw new Error('Informe uma data válida para a previsão.');
+      if (cash && completed && (!isValidDate(paidOn) || paidOn > localDate())) throw new Error('Informe uma data de pagamento ou recebimento válida, até hoje.');
+      if (completionChanged && outsideMonth && !confirmedDate) throw new Error('Confirme a data fora do mês de referência antes de continuar.');
+      const completion: PlanCompletionInput | undefined = completionChanged ? {
+        month: completionMonth, completed,
+        ...(cash && completed ? { paidOn } : {}),
+        ...(cash && initialCompletion.entryVersion !== undefined ? { expectedEntryVersion: initialCompletion.entryVersion } : {}),
+      } : undefined;
+      const saved = await savePlan(input, existing?.id, existing?.version, completion);
       onSaved(saved);
     } catch (e) { setError(errorText(e)); setSaving(false); }
   }
@@ -122,7 +151,8 @@ function PlanForm({ editor, month, accounts, categories, onClose, onSaved }: {
     </select></label>
     <label>Descrição<input autoFocus required maxLength={150} value={description} onChange={(event) => setDescription(event.target.value)} placeholder={placeholders[type]} /></label>
     <label>{type === 'installment' ? 'Valor de cada parcela em reais' : type === 'reserve' ? 'Valor mensal a separar em reais' : type === 'annual' ? 'Valor anual em reais' : 'Valor mensal em reais'}<div className="planning-money-field"><span>R$</span><input required inputMode="decimal" placeholder="0,00" value={amount} onChange={(event) => setAmount(event.target.value)} aria-label={type === 'installment' ? 'Valor de cada parcela em reais' : 'Valor previsto em reais'} /></div></label>
-    <div className="form-grid"><label>{type === 'installment' ? 'Mês de referência da parcela' : type === 'annual' ? 'Primeiro mês de vencimento' : 'Primeiro mês da previsão'}<input required type="month" min="1900-01" max="9999-12" value={startMonth} onChange={(event) => setStartMonth(event.target.value)} /></label><label>{type === 'salary' ? 'Dia do recebimento' : type === 'reserve' ? 'Dia para separar' : 'Dia do vencimento'}<input required type="number" min="1" max="31" step="1" value={dueDay} onChange={(event) => setDueDay(event.target.value)} /></label></div>
+    <label>{type === 'installment' ? 'Data da parcela de referência' : type === 'annual' ? 'Data do primeiro vencimento' : 'Data da previsão'}<input required type="date" min="1900-01-01" max="9999-12-31" value={forecastDate} onChange={(event) => { setForecastDate(event.target.value); setForecastDateChanged(true); setConfirmedDate(false); }} aria-label="Data da previsão" /></label>
+    <p className="planning-field-help">{type === 'annual' ? 'A previsão se repete anualmente nesta data.' : `A previsão se repete no dia ${Number.isInteger(dueDay) ? dueDay : 'informado'} de cada mês.`}</p>
     {type === 'installment' && <div className="planning-installment-form">
       <div className="form-grid"><label>Parcela neste mês<input required type="number" min="1" max="1200" step="1" value={installmentNumber} onChange={(event) => setInstallmentNumber(event.target.value)} /></label><label>Total de parcelas<input required type="number" min="1" max="1200" step="1" value={totalInstallments} onChange={(event) => setTotalInstallments(event.target.value)} /></label></div>
       {lastInstallmentMonth && <p><Layers3 size={15} /><span>Em <strong>{monthLabel(startMonth)}</strong>, será a parcela <strong>{installmentNumber}/{totalInstallments}</strong>. Última prevista em <strong>{monthLabel(lastInstallmentMonth)}</strong>.</span></p>}
@@ -130,8 +160,15 @@ function PlanForm({ editor, month, accounts, categories, onClose, onSaved }: {
     {isCardPlan(type) && <label>Nome do cartão<input required maxLength={80} value={cardName} onChange={(event) => setCardName(event.target.value)} placeholder="Ex.: cartão principal" /></label>}
     {cash && <div className="form-grid"><label>Conta padrão<select required value={accountId} onChange={(event) => setAccountId(event.target.value)}><option value="" disabled>Selecione uma conta</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label><label>Categoria<select required value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="" disabled>Selecione uma categoria</option>{matchingCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label></div>}
     {type !== 'installment' && <label>Último mês da previsão <span className="planning-optional">opcional</span><input type="month" min={startMonth || '1900-01'} max="9999-12" value={endMonth} onChange={(event) => setEndMonth(event.target.value)} /></label>}
-    <div className="planning-form-context"><Info size={16} /><p>{type === 'salary' ? 'Salário e adiantamento devem ser dois itens, cada um com sua data. A receita só entra no saldo da conta ao registrar o recebimento.' : isCardPlan(type) ? 'Este valor compromete o orçamento mensal. Conferir o item na fatura não cria outra despesa nem registra o pagamento da fatura.' : type === 'reserve' ? 'A reserva reduz o valor livre do orçamento. Marcar como separado é um controle do planejamento e não movimenta a conta.' : 'A previsão entra no orçamento do mês. A conta só é movimentada ao registrar o pagamento.'}</p></div>
-    {existing && <p className="planning-edit-note">As mudanças ajustam as previsões. Pagamentos e recebimentos já registrados mantêm seu histórico.</p>}
+    <fieldset className="planning-completion-fields">
+      <legend>Confirmação de {validCompletionMonth ? monthLabel(completionMonth) : 'referência'}</legend>
+      <label className="checkbox-row"><input type="checkbox" checked={completed} onChange={(event) => { setCompleted(event.target.checked); setConfirmedDate(false); }} /><span>{completionLabel}</span></label>
+      {cash && completed && <label>Data do {type === 'salary' ? 'recebimento' : 'pagamento'}<input required type="date" min="1900-01-01" max={localDate()} value={paidOn} onChange={(event) => { setPaidOn(event.target.value); setConfirmedDate(false); }} /></label>}
+      {completionChanged && outsideMonth && <label className="planning-date-confirm"><input required type="checkbox" checked={confirmedDate} onChange={(event) => setConfirmedDate(event.target.checked)} /><span>Confirmo que a data do {type === 'salary' ? 'recebimento' : 'pagamento'} está fora de {monthLabel(completionMonth)}. O orçamento continua nesse mês e o saldo considera a data informada.</span></label>}
+      <p className="planning-field-help">{cash ? 'Ao confirmar, o recebimento ou pagamento é registrado uma única vez na conta. Desmarcar reabre o lançamento do mês.' : type === 'reserve' ? 'Separar a reserva é um controle do planejamento e não movimenta a conta.' : 'Conferir o item na fatura não registra um pagamento nem cria outra despesa na conta.'}</p>
+    </fieldset>
+    <div className="planning-form-context"><Info size={16} /><p>{type === 'salary' ? 'Salário e adiantamento devem ser dois itens, cada um com sua data.' : isCardPlan(type) ? 'Este valor compromete o orçamento mensal. O pagamento da fatura é registrado em Lançamentos.' : type === 'reserve' ? 'A reserva reduz o valor livre do orçamento mensal.' : 'A previsão entra no orçamento do mês. A confirmação do pagamento atualiza o saldo da conta.'}</p></div>
+    {existing && <p className="planning-edit-note">Alterar a previsão mantém os valores dos lançamentos já registrados. A confirmação acima altera somente a situação e a data do mês indicado.</p>}
     <p className="planning-field-help">Vencimentos em dias que não existem no mês usam o último dia disponível.</p>
     {error && <p className="form-error" role="alert">{error}</p>}
     <p className="form-note"><HardDrive size={14} />Alterações salvas pelo Apps Script no Google Sheets.</p>
@@ -291,7 +328,7 @@ export default function PlanningPage({ month, onMonthChange, accounts, categorie
     {inactivePlans.length > 0 && <section className="panel planning-inactive"><button type="button" className="planning-inactive-toggle" aria-expanded={showInactive} aria-controls="planning-inactive-list" onClick={() => setShowInactive(!showInactive)}><Clock3 size={17} /><span>Outros itens cadastrados<strong>{inactivePlans.length}</strong></span><ChevronRight className={showInactive ? 'is-open' : ''} size={16} /></button>{showInactive && <div id="planning-inactive-list"><p>Itens futuros, encerrados ou sem vencimento no mês selecionado.</p>{inactivePlans.map((plan) => <div className="planning-inactive-row" key={plan.id}><span><strong>{plan.description}</strong><small>{GROUPS.find((group) => group.type === plan.type)?.title} · {plan.archived ? 'Previsão encerrada' : `Início em ${monthLabel(plan.startMonth)}`}</small></span><strong>{formatMoney(plan.amountCents)}</strong><button type="button" className="icon-button" disabled={plan.archived} title={plan.archived ? 'Previsão encerrada; cadastre outra para retomar' : 'Editar previsão'} aria-label={`Editar previsão: ${plan.description}`} onClick={() => setEditor({ plan, type: plan.type })}><Pencil size={14} /></button>{!plan.archived && <button type="button" className="icon-button planning-end-button" aria-label={`Encerrar previsão: ${plan.description}`} onClick={() => setEnding(plan)}><ArchiveX size={15} /></button>}</div>)}</div>}</section>}
 
     <p className="planning-bottom-note"><HardDrive size={14} />O planejamento é salvo no Google Sheets. É preciso internet para carregar e salvar os dados.</p>
-    {editor && <PlanningDialog title={editor.plan ? 'Editar previsão' : 'Adicionar ao planejamento'} wide onClose={() => setEditor(null)}><PlanForm editor={editor} month={month} accounts={accounts} categories={categories} onClose={() => setEditor(null)} onSaved={(plan) => { setEditor(null); if (!editor.plan && plan.startMonth !== month) onMonthChange(plan.startMonth); onNotify(editor.plan ? 'Previsão atualizada. Registros realizados foram preservados.' : 'Item adicionado ao planejamento.'); }} /></PlanningDialog>}
+    {editor && <PlanningDialog title={editor.plan ? 'Editar previsão' : 'Adicionar ao planejamento'} wide onClose={() => setEditor(null)}><PlanForm editor={editor} month={month} accounts={accounts} categories={categories} entries={entries} occurrences={data.occurrences} onClose={() => setEditor(null)} onSaved={(plan) => { setEditor(null); if (!editor.plan && plan.startMonth !== month) onMonthChange(plan.startMonth); onNotify(editor.plan ? 'Previsão atualizada.' : 'Item adicionado ao planejamento.'); }} /></PlanningDialog>}
     {settlement && <PlanningDialog title={settlement.plan.type === 'salary' ? 'Registrar recebimento' : 'Registrar pagamento'} onClose={() => setSettlement(null)}><SettlementForm row={settlement} accounts={accounts} candidates={entries.filter((entry) => entry.kind === (settlement.plan.type === 'salary' ? 'income' : 'expense') && entry.occurredOn.startsWith(`${month}-`) && !entry.planId && !data.occurrences.some((occurrence) => occurrence.linkedEntryId === entry.id)).sort((a, b) => Math.abs(a.amountCents - settlement.amountCents) - Math.abs(b.amountCents - settlement.amountCents) || a.occurredOn.localeCompare(b.occurredOn))} onClose={() => setSettlement(null)} onSaved={(result) => { const income = settlement.plan.type === 'salary'; setSettlement(null); onNotify(result === 'linked' ? 'Lançamento vinculado ao planejamento, sem criar duplicação.' : income ? 'Recebimento registrado e saldo atualizado.' : 'Pagamento registrado e saldo atualizado.'); }} /></PlanningDialog>}
     {ending && <PlanningDialog title="Encerrar previsão?" onClose={() => setEnding(null)}><EndPlanForm plan={ending} month={month} onClose={() => setEnding(null)} onSaved={() => { setEnding(null); onNotify('Previsão encerrada a partir deste mês. Histórico preservado.'); }} /></PlanningDialog>}
   </div>;

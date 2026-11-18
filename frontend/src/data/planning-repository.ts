@@ -1,6 +1,6 @@
 import { localDate } from '../domain/finance';
 import type { Entry } from '../domain/types';
-import type { PlanInput, PlanItem, PlanOccurrence, PlanningSnapshot } from '../domain/planning-types';
+import type { PlanCompletionInput, PlanInput, PlanItem, PlanOccurrence, PlanningSnapshot } from '../domain/planning-types';
 import { getCachedState, runRemoteCommand } from './repository';
 
 /** Consulta a cópia em memória de uma resposta confirmada pelo Apps Script. */
@@ -9,8 +9,8 @@ export async function getPlanningSnapshot(): Promise<PlanningSnapshot> {
   return { plans: plans.sort((a, b) => a.createdAt.localeCompare(b.createdAt)), occurrences };
 }
 
-export function savePlan(input: PlanInput, id?: string, expectedVersion?: number): Promise<PlanItem> {
-  return runRemoteCommand('savePlan', { input, ...(id ? { id } : {}), ...(expectedVersion === undefined ? {} : { expectedVersion }) });
+export function savePlan(input: PlanInput, id?: string, expectedVersion?: number, completion?: PlanCompletionInput): Promise<PlanItem> {
+  return runRemoteCommand('savePlan', { input, ...(id ? { id } : {}), ...(expectedVersion === undefined ? {} : { expectedVersion }), ...(completion ? { completion } : {}) });
 }
 
 export function deletePlan(id: string, expectedVersion: number, fromMonth = localDate().slice(0, 7)): Promise<PlanItem> {

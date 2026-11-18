@@ -164,3 +164,112 @@ describe('FinanceService: regras e isolamento', () => {
     expect(restored.state).toEqual(demo);
   });
 });
+
+describe('FinanceService: previsão e situação salvas em uma única operação', () => {
+  it('cadastra previsão e recebimento no mesmo comando sem criar lançamentos duplicados', () => {
+    const input: PlanInput = { ...planInput(), type: 'salary', categoryId: 'income', description: 'Salário previsto', amountCents: 300000, dueDay: 5 };
+    const saved = run<PlanItem>(base(), 'savePlan', { input, completion: { month: '2026-11', completed: true, paidOn: '2026-11-05' } });
+    expect(saved.state.plans).toHaveLength(1);
+    expect(saved.state.entries).toHaveLength(1);
+    const entry = saved.state.entries[0];
+    expect(entry).toMatchObject({ planId: saved.result.id, planMonth: '2026-11', kind: 'income', amountCents: 300000, status: 'paid', paidOn: '2026-11-05' });
+    expect(saved.state.occurrences[0]).toMatchObject({ status: 'done', linkedEntryId: entry.id });
+    expect(accountBalance(saved.state.accounts[0], saved.state.entries)).toBe(400000);
+    const repeated = run<PlanItem>(saved.state, 'savePlan', { input, id: saved.result.id, expectedVersion: saved.result.version, completion: { month: '2026-11', completed: true, paidOn: '2026-11-05', expectedEntryVersion: entry.version } });
+    expect(repeated.state.entries).toEqual(saved.state.entries);
+  });
+
+  it('editar apenas a previsão conserva o valor, a descrição e a data de um pagamento já registrado', () => {
+    const input = planInput();
+    const saved = run<PlanItem>(base(), 'savePlan', { input, completion: { month: '2026-11', completed: true, paidOn: '2026-11-10' } });
+    const changed = run<PlanItem>(saved.state, 'savePlan', { id: saved.result.id, expectedVersion: saved.result.version, input: { ...input, description: 'Nova previsão', amountCents: 99999, dueDay: 28 } });
+    expect(changed.result).toMatchObject({ description: 'Nova previsão', amountCents: 99999, dueDay: 28 });
+    expect(changed.state.entries).toEqual(saved.state.entries);
+    expect(changed.state.occurrences).toEqual(saved.state.occurrences);
+  });
+
+  it('altera explicitamente a data do pagamento sem reescrever o valor real pelo novo valor previsto', () => {
+    const input = planInput();
+    const saved = run<PlanItem>(base(), 'savePlan', { input, completion: { month: '2026-11', completed: true, paidOn: '2026-11-10' } });
+    const previous = saved.state.entries[0];
+    const changed = run<PlanItem>(saved.state, 'savePlan', {
+      id: saved.result.id, expectedVersion: saved.result.version,
+      input: { ...input, description: 'Outra previsão', amountCents: 99999, dueDay: 28 },
+      completion: { month: '2026-11', completed: true, paidOn: '2026-11-12', expectedEntryVersion: previous.version },
+    });
+    expect(changed.state.entries).toHaveLength(1);
+    expect(changed.state.entries[0]).toMatchObject({ id: previous.id, amountCents: previous.amountCents, description: previous.description, dueOn: previous.dueOn, paidOn: '2026-11-12', status: 'paid', version: previous.version + 1 });
+  });
+
+  it('reabrir o compromisso remove a data de pagamento e atualiza o saldo sem excluir o lançamento', () => {
+    const input = planInput();
+    const saved = run<PlanItem>(base(), 'savePlan', { input, completion: { month: '2026-11', completed: true, paidOn: '2026-11-10' } });
+    const previous = saved.state.entries[0];
+    const reopened = run<PlanItem>(saved.state, 'savePlan', { input, id: saved.result.id, expectedVersion: saved.result.version, completion: { month: '2026-11', completed: false, expectedEntryVersion: previous.version } });
+    expect(reopened.state.entries).toHaveLength(1);
+    expect(reopened.state.entries[0]).toMatchObject({ id: previous.id, status: 'pending', amountCents: previous.amountCents, version: previous.version + 1 });
+    expect(reopened.state.entries[0].paidOn).toBeUndefined();
+    expect(reopened.state.occurrences[0].status).toBe('pending');
+    expect(accountBalance(reopened.state.accounts[0], reopened.state.entries)).toBe(100000);
+  });
+
+  it.each(['cardFixed', 'installment', 'reserve'] as const)('conferir %s no cadastro não cria uma despesa bancária', (type) => {
+    const input: PlanInput = {
+      type, description: 'Compromisso sem movimento bancário', amountCents: 2500, startMonth: '2026-11', dueDay: 5,
+      ...(type !== 'reserve' ? { cardName: 'Cartão de teste' } : {}),
+      ...(type === 'installment' ? { installmentNumber: 4, totalInstallments: 6 } : {}),
+    };
+    const saved = run<PlanItem>(base(), 'savePlan', { input, completion: { month: '2026-11', completed: true } });
+    expect(saved.state.entries).toHaveLength(0);
+    expect(saved.state.occurrences[0]).toMatchObject({ planId: saved.result.id, month: '2026-11', status: 'done' });
+    expect(accountBalance(saved.state.accounts[0], saved.state.entries)).toBe(100000);
+    const undone = run<PlanItem>(saved.state, 'savePlan', { input, id: saved.result.id, expectedVersion: saved.result.version, completion: { month: '2026-11', completed: false } });
+    expect(undone.state.entries).toHaveLength(0);
+    expect(undone.state.occurrences[0].status).toBe('pending');
+  });
+
+  it('aceita pagamento em outro mês sem trocar a competência do planejamento', () => {
+    const saved = run<PlanItem>(base(), 'savePlan', { input: { ...planInput(), startMonth: '2026-10' }, completion: { month: '2026-10', completed: true, paidOn: '2026-11-14' } });
+    expect(saved.state.entries[0]).toMatchObject({ planMonth: '2026-10', occurredOn: '2026-10-20', dueOn: '2026-10-20', paidOn: '2026-11-14' });
+    expect(saved.state.occurrences[0]).toMatchObject({ month: '2026-10', status: 'done' });
+  });
+
+  it.each([
+    { month: '2026-11', completed: true, paidOn: '2026-11-15' },
+    { month: '2026-11', completed: true, paidOn: '2026-02-30' },
+    { month: '2026-13', completed: true, paidOn: '2026-11-10' },
+    { month: '2026-11', completed: 'sim', paidOn: '2026-11-10' },
+  ])('uma confirmação inválida desfaz também a criação da previsão: %j', (completion) => {
+    const state = base();
+    const original = structuredClone(state);
+    expect(() => run(state, 'savePlan', { input: planInput(), completion })).toThrow(AppError);
+    expect(state).toEqual(original);
+    expect(state.plans).toHaveLength(0);
+    expect(state.entries).toHaveLength(0);
+  });
+
+  it('rejeita versão antiga ou omitida do lançamento sem publicar a edição da previsão', () => {
+    const input = planInput();
+    const saved = run<PlanItem>(base(), 'savePlan', { input, completion: { month: '2026-11', completed: true, paidOn: '2026-11-10' } });
+    const original = structuredClone(saved.state);
+    const entry = saved.state.entries[0];
+    for (const expectedEntryVersion of [undefined, entry.version - 1]) {
+      try {
+        run(saved.state, 'savePlan', { input: { ...input, description: 'Edição rejeitada' }, id: saved.result.id, expectedVersion: saved.result.version, completion: { month: '2026-11', completed: false, ...(expectedEntryVersion === undefined ? {} : { expectedEntryVersion }) } });
+        throw new Error('Conflito esperado');
+      } catch (error) { expect(error).toMatchObject({ status: 409 }); }
+      expect(saved.state).toEqual(original);
+    }
+  });
+
+  it('não recria silenciosamente um lançamento removido enquanto o formulário estava aberto', () => {
+    const input = planInput();
+    const saved = run<PlanItem>(base(), 'savePlan', { input, completion: { month: '2026-11', completed: true, paidOn: '2026-11-10' } });
+    const entry = saved.state.entries[0];
+    const deleted = run(saved.state, 'deleteEntry', { id: entry.id, expectedVersion: entry.version });
+    const original = structuredClone(deleted.state);
+    expect(() => run(deleted.state, 'savePlan', { input, id: saved.result.id, expectedVersion: saved.result.version, completion: { month: '2026-11', completed: true, paidOn: '2026-11-12', expectedEntryVersion: entry.version } })).toThrow(AppError);
+    expect(deleted.state).toEqual(original);
+    expect(deleted.state.entries).toHaveLength(0);
+  });
+});

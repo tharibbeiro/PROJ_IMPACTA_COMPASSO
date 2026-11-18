@@ -64,7 +64,12 @@ export class FinanceService {
           this.checkLimits(restored);
           return { state: restored, result: undefined };
         }
-        case 'savePlan': result = this.savePlan(state, payload.input, optionalId(payload.id), payload.expectedVersion); break;
+        case 'savePlan': {
+          const plan = this.savePlan(state, payload.input, optionalId(payload.id), payload.expectedVersion);
+          if (payload.completion !== undefined) this.applyPlanCompletion(state, plan, payload.completion);
+          result = plan;
+          break;
+        }
         case 'deletePlan': result = this.deletePlan(state, text(payload.id, 'Planejamento', 100), payload.expectedVersion, month(payload.fromMonth ?? this.today().slice(0, 7))); break;
         case 'realizePlan': result = this.realizePlan(state, text(payload.planId, 'Planejamento', 100), month(payload.month)); break;
         case 'settlePlan': result = this.settlePlan(state, text(payload.planId, 'Planejamento', 100), month(payload.month), payload.options === undefined ? {} : object(payload.options, 'Pagamento')); break;
@@ -247,6 +252,41 @@ export class FinanceService {
     if (existing) state.plans[state.plans.indexOf(existing)] = plan;
     else state.plans.push(plan);
     return plan;
+  }
+
+  private applyPlanCompletion(state: AcademicState, plan: PlanItem, raw: unknown): void {
+    const completion = object(raw, 'Confirmação do planejamento');
+    const selectedMonth = month(completion.month);
+    if (typeof completion.completed !== 'boolean') throw new AppError('Informe se o item já foi concluído.', 400);
+    if (!rowsForMonth([plan], state.occurrences, state.entries, selectedMonth).length) {
+      throw new AppError('Este compromisso não possui previsão no mês da confirmação.', 400);
+    }
+
+    if (!bankPlan(plan)) {
+      if (completion.paidOn !== undefined || completion.expectedEntryVersion !== undefined) {
+        throw new AppError('Itens de cartão e reservas são conferidos sem registrar pagamento bancário.', 400);
+      }
+      this.setPlanningChecked(state, plan.id, selectedMonth, completion.completed);
+      return;
+    }
+
+    const paidOn = completion.paidOn;
+    if (completion.completed && (!isValidDate(paidOn) || paidOn > this.today())) {
+      throw new AppError('Informe uma data de pagamento ou recebimento válida, até hoje.', 400);
+    }
+    if (!completion.completed && paidOn !== undefined) throw new AppError('Um item pendente não deve informar data de pagamento.', 400);
+    const entry = this.findPlanEntry(state, plan.id, selectedMonth);
+    if (!entry) {
+      if (completion.expectedEntryVersion !== undefined) throw new AppError('O lançamento vinculado foi alterado. Atualize os dados antes de continuar.', 409);
+      if (completion.completed) this.settlePlan(state, plan.id, selectedMonth, { paidOn });
+      return;
+    }
+
+    requireVersion(entry.version, completion.expectedEntryVersion);
+    const status = completion.completed ? 'paid' : 'pending';
+    if (entry.status === status && (!completion.completed || entry.paidOn === paidOn)) return;
+    // Alterar a previsão não reescreve o valor nem a descrição já registrados.
+    this.saveEntry(state, { ...entry, status, ...(completion.completed ? { paidOn } : {}) }, entry.id, entry.version);
   }
 
   private deletePlan(state: AcademicState, id: string, expectedVersion: unknown, fromMonth: string): PlanItem {

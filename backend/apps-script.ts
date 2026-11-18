@@ -89,9 +89,13 @@ export function createAppsScriptController(runtime: AppsScriptRuntime, clock: ()
     return { repository: new SheetsFinanceRepository(port, clock, () => runtime.Utilities.getUuid()), port };
   };
 
-  const authenticate = (repo: SheetsFinanceRepository, token: unknown): DemoSession => {
+  const validatedToken = (token: unknown): string => {
     if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) throw new AppError('A sessão de demonstração é inválida ou expirou. Inicie uma nova demonstração.', 401);
-    const session = repo.findSession(hash(token));
+    return token;
+  };
+
+  const authenticate = (repo: SheetsFinanceRepository, token: unknown): DemoSession => {
+    const session = repo.findSession(hash(validatedToken(token)));
     if (!session || Date.parse(session.expiresAt) <= clock().getTime()) throw new AppError('A sessão de demonstração é inválida ou expirou. Inicie uma nova demonstração.', 401);
     return session;
   };
@@ -117,6 +121,7 @@ export function createAppsScriptController(runtime: AppsScriptRuntime, clock: ()
     }),
 
     bootstrap: (token: string): string => locked(() => {
+      validatedToken(token);
       const { repository: repo } = repository();
       const session = authenticate(repo, token);
       const loaded = repo.load(session.id);
@@ -124,6 +129,7 @@ export function createAppsScriptController(runtime: AppsScriptRuntime, clock: ()
     }),
 
     createDemoSession: (previousToken?: unknown): string => locked(() => {
+      if (previousToken !== undefined && previousToken !== null) validatedToken(previousToken);
       const { repository: repo, port } = repository();
       // Clientes sem sessão podem enviar null pelo transporte do Apps Script.
       const previous = previousToken === undefined || previousToken === null ? undefined : authenticate(repo, previousToken);
@@ -139,6 +145,7 @@ export function createAppsScriptController(runtime: AppsScriptRuntime, clock: ()
     }),
 
     command: (token: string, commandJson: string): string => locked(() => {
+      validatedToken(token);
       const { repository: repo } = repository();
       const session = authenticate(repo, token);
       const command = parseCommand(commandJson);

@@ -145,9 +145,14 @@ function requestState<Result>(method: RpcMethod, args: string[]): Promise<StateE
       if (finished) return;
       finished = true;
       clearTimeout(timeout);
-      reject(new ApiRequestError('Não foi possível confirmar a operação no Apps Script. Verifique a conexão e tente novamente. Os dados exibidos não foram alterados.', 'network'));
+      const message = method === 'compassoCommand'
+        ? 'Ainda não foi possível confirmar a gravação. Ela pode ter sido concluída. Verifique a conexão e tente salvar novamente neste formulário para confirmar a operação.'
+        : 'Não foi possível carregar os dados do Apps Script. Verifique a conexão e tente novamente.';
+      reject(new ApiRequestError(message, 'network'));
     };
-    const timeout = setTimeout(fail, 45_000);
+    // Gravações podem aguardar o bloqueio e uma resposta mais lenta do Google.
+    // A chave do comando é mantida se a confirmação não chegar dentro do prazo.
+    const timeout = setTimeout(fail, method === 'compassoBootstrap' ? 45_000 : 90_000);
     const onSuccess = (raw: unknown) => {
       if (finished) return;
       finished = true;

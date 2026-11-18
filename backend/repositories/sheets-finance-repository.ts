@@ -7,7 +7,7 @@ export type Cell = string | number | boolean;
 
 export interface SheetsPort {
   /** Inclui o cabeçalho na linha 1. */
-  read(sheetName: string): Cell[][];
+  read(sheetName: string, options?: { fresh?: boolean }): Cell[][];
   append(sheetName: string, rows: Cell[][]): void;
   replaceCell(sheetName: string, row1Based: number, col1Based: number, value: Cell): void;
   ensureSheet(sheetName: string, headers: readonly string[]): void;
@@ -149,8 +149,8 @@ export class SheetsFinanceRepository implements FinanceRepository {
     for (const [name, headers] of Object.entries(SHEET_HEADERS)) this.port.ensureSheet(name, headers);
   }
 
-  private rows(name: FinanceSheetName): Row[] {
-    const values = this.port.read(name);
+  private rows(name: FinanceSheetName, fresh = false): Row[] {
+    const values = this.port.read(name, { fresh });
     const headers = SHEET_HEADERS[name];
     if (!values.length || headers.some((header, index) => values[0][index] !== header)) throw storageError();
     return values.slice(1).map((cells, index) => ({ cells, row: index + 2 })).filter(({ cells }) => cells.some((cell) => cell !== ''));
@@ -162,8 +162,8 @@ export class SheetsFinanceRepository implements FinanceRepository {
     return now;
   }
 
-  private sessionRecords(): SessionRecord[] {
-    return this.rows('Sessoes').map(({ row, cells }) => {
+  private sessionRecords(fresh = false): SessionRecord[] {
+    return this.rows('Sessoes', fresh).map(({ row, cells }) => {
       const commit = pointer(cells[2]);
       return {
         id: string(cells[0]), tokenHash: string(cells[1]), pointer: commit, revision: commit.revision,
@@ -178,8 +178,8 @@ export class SheetsFinanceRepository implements FinanceRepository {
     return session.status === 'active' && expiry > this.now().getTime();
   }
 
-  private activeSession(id: string): SessionRecord {
-    const matches = this.sessionRecords().filter((session) => session.id === id);
+  private activeSession(id: string, fresh = false): SessionRecord {
+    const matches = this.sessionRecords(fresh).filter((session) => session.id === id);
     if (matches.length > 1) throw storageError();
     const session = matches[0];
     if (!session || !this.isActive(session)) throw new AppError('Sua sessão de demonstração expirou. Inicie outra demonstração.', 401);
@@ -192,6 +192,12 @@ export class SheetsFinanceRepository implements FinanceRepository {
 
   private commandChain(session: SessionRecord): StoredCommand[] {
     const commands = this.rows('Comandos').filter(({ cells }) => cells[0] === session.id);
+    const bySnapshot = new Map<Cell | undefined, Row[]>();
+    for (const row of commands) {
+      const key = row.cells[1];
+      const bucket = bySnapshot.get(key);
+      if (bucket) bucket.push(row); else bySnapshot.set(key, [row]);
+    }
     const chain: StoredCommand[] = [];
     const visited = new Set<string>();
     let selected = session.pointer;
@@ -199,7 +205,7 @@ export class SheetsFinanceRepository implements FinanceRepository {
       if (visited.has(selected.snapshotId)) throw storageError();
       visited.add(selected.snapshotId);
       // Não interpreta nem confia em comandos de snapshots órfãos.
-      const matches = commands.filter(({ cells }) => cells[1] === selected.snapshotId && number(cells[2]) === selected.revision);
+      const matches = (bySnapshot.get(selected.snapshotId) ?? []).filter(({ cells }) => number(cells[2]) === selected.revision);
       if (matches.length !== 1) throw storageError();
       const cells = matches[0].cells;
       const command: StoredCommand = {
@@ -297,7 +303,7 @@ export class SheetsFinanceRepository implements FinanceRepository {
     this.port.append('Comandos', [[sessionId, next.snapshotId, next.revision, session.pointer.snapshotId, commandId, resultJson, this.now().toISOString(), fingerprint ?? '']]);
     this.port.flush();
     // ScriptLock protege o compare-and-set; a releitura também evita publicar um snapshot já superado.
-    const latest = this.activeSession(sessionId);
+    const latest = this.activeSession(sessionId, true);
     if (latest.revision !== expectedRevision || latest.pointer.snapshotId !== session.pointer.snapshotId) return { applied: false, revision: latest.revision };
     this.port.replaceCell('Sessoes', latest.row, 3, JSON.stringify(next));
     this.port.flush();

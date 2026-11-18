@@ -107,3 +107,27 @@
 @media (max-width: 359px) {
   .planning-summary { grid-template-columns: minmax(0,1fr); }
 }
+
+/* O prefixo da moeda reserva seu próprio espaço mesmo após o CSS geral da forma. */
+.form.planning-form .planning-money-field input:not([type=checkbox]) {
+  padding-left: 44px;
+}
+.planning-money-field > span { left: 12px; pointer-events: none; }
+.planning-completion-fields {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid #e3ebdc;
+  border-radius: 8px;
+  background: #f9fbf5;
+}
+.planning-completion-fields legend {
+  padding: 0 5px;
+  color: #536b4d;
+  font-size: 12px;
+  font-weight: 600;
+}
+.planning-completion-fields .checkbox-row { align-items: flex-start; line-height: 1.7; }
+.planning-completion-fields .checkbox-row input { margin-top: 3px; flex-shrink: 0; }
