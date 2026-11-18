@@ -6,3 +6,104 @@
 @media(max-width:360px){.planning-metric>strong{font-size:21px}.planning-toolbar{flex-wrap:wrap}.planning-toolbar>.button{margin-left:auto}.planning-group-header{flex-wrap:wrap}.planning-subtotal{margin-left:41px}.planning-form .form-grid{grid-template-columns:1fr}.planning-inactive-row>span{flex-basis:100%}}
 .planning-link-choice{display:grid;grid-template-columns:1.3fr 1fr;gap:5px;padding:4px;background:#f2f6eb;border-radius:7px}.planning-link-choice>button{padding:9px 8px;border-radius:5px;color:#637858;font-size:11px;line-height:1.7}.planning-link-choice>button.selected{background:#fff;box-shadow:0 1px 4px #24451e13;color:#39713b;font-weight:600}.planning-form .planning-date-confirm{display:flex;flex-direction:row;align-items:flex-start;gap:9px;background:#fcf7e9;border:1px solid #f1e6ca;border-radius:7px;padding:12px;color:#806d44;font-size:11px;font-weight:400;line-height:1.9}.planning-date-confirm>input{width:15px;height:15px;flex-shrink:0;accent-color:var(--green);margin:3px 0 0}.planning-item-actions .icon-button:disabled,.planning-inactive-row .icon-button:disabled{cursor:default;opacity:.35}.planning-unlinked-note{display:flex;align-items:flex-start;gap:9px;margin-bottom:18px;background:#f4f7ee;border:1px solid #e3ead8;border-radius:8px;padding:13px 15px;color:#5c7452;font-size:11px;line-height:1.9}.planning-unlinked-note>svg{margin-top:2px}.planning-unlinked-note strong{font-weight:600}.planning-unlinked-note p{flex:1}.planning-unlinked-note button{align-self:center;color:var(--green);font-size:11px;font-weight:600;white-space:nowrap}
 @media(max-width:640px){.planning-link-choice>button{font-size:10px;padding:9px 6px}.planning-form .planning-date-confirm{font-size:11px}.planning-unlinked-note{flex-wrap:wrap;font-size:11px;padding:12px}.planning-unlinked-note p{min-width:180px}.planning-unlinked-note button{margin-left:24px}}
+
+/* O planejamento acompanha a largura disponível, inclusive dentro do Apps Script. */
+.planning-page,
+.planning-page > *,
+.planning-group,
+.planning-toolbar > *,
+.planning-composition-heading > *,
+.planning-metric > div > span,
+.planning-group-toggle > span,
+.planning-item-detail > span,
+.planning-installment-detail > span,
+.planning-form label,
+.planning-form-context p {
+  min-width: 0;
+}
+.planning-toolbar,
+.planning-composition-heading,
+.planning-group-header,
+.planning-group-footer,
+.planning-item-actions {
+  flex-wrap: wrap;
+}
+.planning-period { max-width: 100%; }
+.planning-period > label { min-width: 0; width: 185px; }
+.planning-toolbar > .button { margin-left: auto; }
+.planning-metric > strong,
+.planning-subtotal,
+.planning-item-amount,
+.planning-budget-legend strong,
+.planning-group-footer > span,
+.planning-inactive-row > strong,
+.planning-settlement-summary > strong {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.planning-metric > strong { line-height: 1.3; }
+.planning-group-toggle { flex: 1 1 180px; max-width: 100%; }
+.planning-group-toggle > span:not(.planning-group-icon) { flex: 1; }
+.planning-group-toggle h2,
+.planning-budget-legend > span,
+.planning-item-detail,
+.planning-installment-detail,
+.planning-form-context,
+.planning-confirm-copy { overflow-wrap: anywhere; }
+.planning-subtotal { margin-left: auto; text-align: right; }
+.planning-group-footer > span { margin-left: auto; text-align: right; }
+.planning-item-actions > .planning-check-button,
+.planning-item-actions > .planning-done { min-width: 0; max-width: 100%; }
+.planning-edit-actions { flex-shrink: 0; }
+.planning-budget-legend > span { min-width: 0; }
+.planning-link-choice { grid-template-columns: minmax(0,1.3fr) minmax(0,1fr); }
+.planning-link-choice > button { min-width: 0; overflow-wrap: anywhere; }
+.planning-unlinked-note p { min-width: 0; }
+.planning-unlinked-note button { max-width: 100%; white-space: normal; }
+
+@media (min-width: 1101px), (max-width: 800px) {
+  .planning-item { grid-template-columns: minmax(0,1fr) fit-content(45%); }
+}
+@media (min-width: 801px) and (max-width: 1100px) {
+  .planning-item { grid-template-columns: minmax(0,1fr) fit-content(30%) minmax(140px,180px); }
+}
+@media (max-width: 640px) {
+  .planning-period > label { width: 145px; }
+  .planning-period > .icon-button {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+  }
+  .planning-toolbar > .button,
+  .planning-group-toggle,
+  .planning-check-button,
+  .planning-link-choice > button,
+  .planning-edit-actions .icon-button,
+  .planning-inactive-row .icon-button {
+    min-height: 44px;
+  }
+  .planning-edit-actions .icon-button,
+  .planning-inactive-row .icon-button { width: 44px; min-width: 44px; }
+  .planning-item-actions > .planning-check-button {
+    min-height: 44px;
+    font-size: 11px;
+  }
+  .planning-item-detail,
+  .planning-installment-detail { font-size: 11px; }
+  .planning-group-footer > .text-button { min-height: 44px; }
+  .planning-dialog .modal-actions > .button {
+    flex: 1 1 120px;
+    min-height: 44px;
+    white-space: normal;
+  }
+  .planning-inactive-row { flex-wrap: wrap; }
+  .planning-inactive-row > span { flex: 1 1 100%; }
+  .planning-inactive-row > strong { margin-right: auto; }
+  .planning-unlinked-note p { min-width: 0; flex-basis: calc(100% - 28px); }
+}
+@media (max-width: 359px) {
+  .planning-summary { grid-template-columns: minmax(0,1fr); }
+}
