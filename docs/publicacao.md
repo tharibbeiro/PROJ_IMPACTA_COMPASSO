@@ -12,7 +12,29 @@ Os arquivos de `apps-script/` já estão compilados e podem ser copiados diretam
 
 ## Configurar os dados
 
-No editor, selecione **`configurarCompasso_`** e execute a função uma vez. A conta proprietária autoriza o acesso às planilhas solicitado pelo projeto. Essa configuração cria a planilha de dados e guarda seu identificador nas propriedades do script.
+A função `configurarCompasso_` termina com sublinhado para impedir sua chamada pela interface pública. Esse nome também fica oculto na lista de execução do editor.
+
+Antes da primeira implantação, acrescente temporariamente esta função ao final de `Code.gs`, fora das demais funções:
+
+```javascript
+function prepararCompasso() {
+  const resultado = JSON.parse(configurarCompasso_());
+  if (!resultado.configured) {
+    throw new Error(resultado.error || 'Não foi possível configurar a planilha.');
+  }
+  console.log('Planilha configurada: ' + resultado.spreadsheetUrl);
+}
+```
+
+1. Salve o arquivo com **Ctrl + S**.
+2. Na lista de funções da barra superior, selecione **`prepararCompasso`**.
+3. Clique em **Executar** e autorize o acesso às planilhas pela conta proprietária.
+4. Confira o **Registro de execução**: a mensagem **Planilha configurada** inclui o endereço da planilha.
+5. Depois do sucesso, apague somente a função temporária **`prepararCompasso`** e salve novamente, antes de publicar.
+
+Mantenha a função original `configurarCompasso_` no código. A configuração cria a planilha de dados e guarda seu identificador nas propriedades do script. Executá-la novamente no mesmo projeto conserva a planilha configurada.
+
+A ocultação de funções com sublinhado é descrita no [blog do Google Apps Script](https://googleappsscript.blogspot.com/2010/06/hiding-helper-functions.html), e a proteção contra chamadas da interface está documentada em [Comunicação cliente-servidor](https://developers.google.com/apps-script/guides/html/communication).
 
 A planilha fica no Drive da conta que executou a configuração. Não é necessário torná-la pública para os visitantes usarem o aplicativo.
 
