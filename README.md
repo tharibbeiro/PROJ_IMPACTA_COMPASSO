@@ -43,7 +43,7 @@ Os arquivos prontos estão na pasta [`apps-script/`](apps-script/):
 - [`Index.html`](apps-script/Index.html): interface com seus scripts e estilos incluídos, sem CDN.
 - [`appsscript.json`](apps-script/appsscript.json): configuração do projeto.
 
-Não é necessário instalar Node.js para copiar esses arquivos para o editor do Google. Crie o projeto, copie os três arquivos, execute `configurarCompasso_` uma vez e publique como aplicativo da Web. O [guia de publicação](docs/publicacao.md) apresenta os passos completos.
+Não é necessário instalar Node.js para copiar esses arquivos para o editor do Google. Crie o projeto, copie os três arquivos, configure a planilha pelo procedimento do guia e publique como aplicativo da Web. O [guia de publicação](docs/publicacao.md) apresenta os passos completos.
 
 ## Organização do projeto
 
