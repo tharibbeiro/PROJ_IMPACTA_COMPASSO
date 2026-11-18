@@ -2,6 +2,8 @@
 
 Sistema web de controle financeiro pessoal desenvolvido como projeto acadêmico. A interface organiza receitas, despesas e compromissos mensais no celular e no computador. A aplicação é servida pelo **Google Apps Script**, com os dados em uma planilha **Google Sheets**.
 
+**Aplicativo:** [Abrir demonstração do Compasso](https://script.google.com/macros/s/AKfycbx4a-Dm3k47NKpYvZJI2rAYjW3y-nrNimP6uPbyebMGfwHjn17QdVPJ9s1fhsYMLtQ/exec)
+
 **Código-fonte:** [PROJ_IMPACTA_COMPASSO](https://github.com/tharibbeiro/PROJ_IMPACTA_COMPASSO)
 
 ## Objetivo
