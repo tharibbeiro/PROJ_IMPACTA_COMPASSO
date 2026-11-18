@@ -9,7 +9,7 @@ await mkdir(directory, { recursive: true });
 const server = await build({
   entryPoints: ['backend/apps-script.ts'],
   bundle: true, write: false, format: 'iife', globalName: 'CompassoBackend_',
-  platform: 'neutral', target: 'es2020', charset: 'utf8', minify: false,
+  platform: 'neutral', target: 'es2018', charset: 'utf8', minify: false,
   define: { 'crypto.randomUUID': 'generateId_', structuredClone: 'cloneValue_' },
   banner: { js: `// Gerado a partir de backend/ e shared/. Edite as fontes e execute npm run build.
 function generateId_() { return Utilities.getUuid(); }
@@ -30,6 +30,10 @@ function compassoCreateDemoSession(previousToken) { return CompassoBackend_.crea
 function compassoCommand(token, commandJson) { return CompassoBackend_.command(token, commandJson); }
 `;
 const code = server.outputFiles[0].text + wrappers;
+// O editor do Apps Script recusa literais BigInt mesmo com runtime V8.
+if (/\bBigInt\s*\(|\b(?:\d[\d_]*|0[xX][\da-fA-F]+)n\b/.test(code)) {
+  throw new Error('O servidor contém uma operação numérica incompatível com o Apps Script.');
+}
 const context = createContext({});
 new Script(code, { filename: 'Code.gs' }).runInContext(context);
 for (const name of ['configurarCompasso_', 'doGet', 'compassoBootstrap', 'compassoCreateDemoSession', 'compassoCommand']) {

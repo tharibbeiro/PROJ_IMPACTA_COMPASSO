@@ -26,9 +26,13 @@ export function parseMoney(raw: string): number {
   } else {
     throw new Error('Informe um valor válido, como 1.234,56.');
   }
-  const cents = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0') || '0');
-  if (cents > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('O valor informado é muito alto.');
-  return Number(cents) * (negative ? -1 : 1);
+  // Compara os dígitos antes de converter, preservando centavos no limite seguro.
+  const digits = (whole + fraction.padEnd(2, '0')).replace(/^0+/, '') || '0';
+  const maximum = String(Number.MAX_SAFE_INTEGER);
+  if (digits.length > maximum.length || (digits.length === maximum.length && digits > maximum)) {
+    throw new Error('O valor informado é muito alto.');
+  }
+  return Number(digits) * (negative ? -1 : 1);
 }
 
 const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });

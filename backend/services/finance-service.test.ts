@@ -130,6 +130,17 @@ describe('FinanceService: regras e isolamento', () => {
     expect(state.entries).toHaveLength(0);
   });
 
+  it.each([1, -1])('protege o total absoluto no limite exato de centavos com saldo de sinal %s', (sign) => {
+    const state = base();
+    state.accounts[0].openingBalanceCents = sign * (Number.MAX_SAFE_INTEGER - 1);
+    const exact = run<Entry>(state, 'saveEntry', { input: { ...entryInput(), amountCents: 1 } });
+    expect(exact.result.amountCents).toBe(1);
+    expect(() => run(exact.state, 'addAccount', { input: { name: 'Saldo zero', type: 'cash', openingBalanceCents: 0 } })).not.toThrow();
+    expect(() => run(exact.state, 'saveEntry', { input: { ...entryInput(), amountCents: 1 } })).toThrow('limite seguro');
+    expect(exact.state.entries).toHaveLength(1);
+    expect(state.entries).toHaveLength(0);
+  });
+
   it('rejeita saldo futuro ou incremento de versão inseguros', () => {
     const unsafe = { type: 'installment', description: 'Valor extremo', amountCents: Number.MAX_SAFE_INTEGER, startMonth: '2026-11', dueDay: 18, cardName: 'Cartão', installmentNumber: 1, totalInstallments: 3 };
     expect(() => run(base(), 'savePlan', { input: unsafe })).toThrow('limite');

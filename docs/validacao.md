@@ -26,6 +26,6 @@ Os testes locais usam substitutos dos serviços do Google. Eles permitem verific
 npm run build
 ```
 
-A compilação verifica os tipos TypeScript e gera `apps-script/Code.gs`, `apps-script/Index.html` e `apps-script/appsscript.json`. A interface e seus estilos são incluídos no HTML, sem depender de CDN.
+A compilação verifica os tipos TypeScript e gera `apps-script/Code.gs`, `apps-script/Index.html` e `apps-script/appsscript.json`. A interface e seus estilos são incluídos no HTML, sem depender de CDN. O servidor usa sintaxe ES2018, e a compilação rejeita literais e chamadas BigInt para evitar incompatibilidade com o editor do Apps Script.
 
 A execução completa deve ser feita no Apps Script, com a planilha configurada. As instruções estão no [guia de publicação](publicacao.md).

@@ -91,9 +91,16 @@ export class FinanceService {
 
   private checkLimits(state: AcademicState): void {
     if (state.accounts.length > 20 || state.categories.length > 100 || state.entries.length > 1000 || state.plans.length > 1000 || state.occurrences.length > 12000) throw new AppError('O limite de registros desta demonstração foi atingido. Reinicie a demonstração para continuar.', 400);
-    const total = [...state.accounts.map((item) => item.openingBalanceCents), ...state.entries.map((item) => item.amountCents), ...state.plans.map((item) => item.amountCents)]
-      .reduce((sum, value) => sum + BigInt(Math.abs(value)), 0n);
-    if (total > BigInt(Number.MAX_SAFE_INTEGER)) throw new AppError('A soma dos valores ultrapassa o limite seguro da demonstração.', 400);
+    let total = 0;
+    const values = [...state.accounts.map((item) => item.openingBalanceCents), ...state.entries.map((item) => item.amountCents), ...state.plans.map((item) => item.amountCents)];
+    for (const value of values) {
+      const amount = Math.abs(value);
+      // Verifica antes de somar para nunca produzir um inteiro arredondado.
+      if (!Number.isSafeInteger(amount) || amount > Number.MAX_SAFE_INTEGER - total) {
+        throw new AppError('A soma dos valores ultrapassa o limite seguro da demonstração.', 400);
+      }
+      total += amount;
+    }
     for (const plan of state.plans) {
       if (plan.type === 'installment' && !Number.isSafeInteger(plan.amountCents * (plan.totalInstallments! - plan.installmentNumber!))) throw new AppError('O saldo futuro das parcelas ultrapassa o limite permitido.', 400);
     }

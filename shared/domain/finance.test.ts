@@ -6,11 +6,15 @@ describe('valores em centavos', () => {
   it.each([
     ['R$ 1.234,56', 123456], ['0,01', 1], ['10,1', 1010], ['125.50', 12550],
     ['1.200', 120000], ['-32,90', -3290], ['0', 0], ['123456789,99', 12345678999],
+    ['90.071.992.547.409,91', Number.MAX_SAFE_INTEGER],
+    ['-90071992547409,91', -Number.MAX_SAFE_INTEGER],
+    ['90071992547409,90', Number.MAX_SAFE_INTEGER - 1],
+    ['000000000000000000000000000,01', 1],
   ])('converte %s sem arredondamento', (input, expected) => {
     expect(parseMoney(input)).toBe(expected);
   });
 
-  it.each(['', '1,234', '12.34,56', '1e3', 'NaN', 'Infinity', '--1', '90071992547410,00'])('rejeita %s', (input) => {
+  it.each(['', '1,234', '12.34,56', '1e3', 'NaN', 'Infinity', '--1', '90071992547410,00', '90071992547409,92', '-90071992547409,92'])('rejeita %s', (input) => {
     expect(() => parseMoney(input)).toThrow();
   });
 });

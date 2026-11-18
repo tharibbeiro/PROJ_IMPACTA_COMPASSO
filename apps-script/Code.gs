@@ -195,6 +195,7 @@ var CompassoBackend_ = (() => {
     };
   }
   function linkedEntriesForMonth(plans, occurrences, entries, month2) {
+    var _a, _b, _c, _d;
     const ids = new Set(plans.map((plan) => plan.id));
     const occurrenceByEntry = new Map(occurrences.filter((occurrence) => occurrence.month === month2 && occurrence.linkedEntryId).map((occurrence) => [occurrence.linkedEntryId, occurrence.planId]));
     const result = /* @__PURE__ */ new Map();
@@ -203,14 +204,15 @@ var CompassoBackend_ = (() => {
       const id = entry.planId && entry.planMonth === month2 ? entry.planId : occurrenceByEntry.get(entry.id);
       if (!id || !ids.has(id)) continue;
       const plan = plans.find((item) => item.id === id);
-      const type = occurrences.find((item) => item.planId === id && item.month === month2)?.snapshot?.type ?? plan.type;
+      const type = (_c = (_b = (_a = occurrences.find((item) => item.planId === id && item.month === month2)) == null ? void 0 : _a.snapshot) == null ? void 0 : _b.type) != null ? _c : plan.type;
       if (type !== "salary" && type !== "fixed" && type !== "annual") continue;
       if (entry.kind !== (type === "salary" ? "income" : "expense")) continue;
-      result.set(id, [...result.get(id) ?? [], entry]);
+      result.set(id, [...(_d = result.get(id)) != null ? _d : [], entry]);
     }
     return result;
   }
   function rowsForMonth(plans, occurrences, entries, month2) {
+    var _a;
     monthIndex(month2);
     const rows = new Map(occurrencesForMonth(plans, month2).map((row) => [row.plan.id, row]));
     for (const occurrence of occurrences) {
@@ -221,7 +223,7 @@ var CompassoBackend_ = (() => {
     const linked = linkedEntriesForMonth(plans, occurrences, entries, month2);
     for (const [id, items] of linked) {
       const plan = plans.find((item) => item.id === id);
-      const existing = rows.get(id) ?? rowForPlan(plan, month2);
+      const existing = (_a = rows.get(id)) != null ? _a : rowForPlan(plan, month2);
       const entry = items[0];
       rows.set(id, { ...existing, amountCents: safeSum(items.map((item) => item.amountCents)), dueOn: entry.dueOn, linkedEntry: entry });
     }
@@ -301,7 +303,7 @@ var CompassoBackend_ = (() => {
       if (utf8ByteLength(raw) > LIMITS.bytes) throw new AppError("A cópia de segurança deve ter até 2 MB.");
       try {
         parsed = JSON.parse(raw);
-      } catch {
+      } catch (e) {
         throw new AppError("Não foi possível ler o arquivo JSON.");
       }
     }
@@ -324,12 +326,13 @@ var CompassoBackend_ = (() => {
     const accountIds = new Set(accounts.map((account) => account.id));
     const categoryById = new Map(categories.map((category) => [category.id, category]));
     const entries = array(backup.entries, "Lançamentos", LIMITS.entries).map((value) => {
+      var _a;
       const item = object(value);
       if (item.kind !== "expense" && item.kind !== "income" || !money(item.amountCents) || !isValidDate(item.occurredOn) || !isValidDate(item.dueOn) || item.status !== "pending" && item.status !== "paid" || !version(item.version) || !timestamp(item.createdAt) || !timestamp(item.updatedAt)) throw new AppError("A cópia contém um lançamento inválido.");
       if (item.status === "paid" && (!isValidDate(item.paidOn) || today !== void 0 && item.paidOn > today)) throw new AppError("A cópia contém uma data de pagamento ou recebimento inválida.");
       const accountId = text2(item.accountId, "Conta", 100);
       const categoryId = text2(item.categoryId, "Categoria", 100);
-      if (!accountIds.has(accountId) || categoryById.get(categoryId)?.kind !== item.kind) throw new AppError("A cópia contém um lançamento sem conta ou categoria compatível.");
+      if (!accountIds.has(accountId) || ((_a = categoryById.get(categoryId)) == null ? void 0 : _a.kind) !== item.kind) throw new AppError("A cópia contém um lançamento sem conta ou categoria compatível.");
       if (item.planId === void 0 !== (item.planMonth === void 0) || item.planMonth !== void 0 && !isValidMonth(item.planMonth)) throw new AppError("A cópia contém um vínculo de planejamento incompleto.");
       const planId = item.planId === void 0 ? void 0 : text2(item.planId, "Planejamento", 100);
       if (item.isCardPayment !== void 0 && typeof item.isCardPayment !== "boolean") throw new AppError("A identificação de pagamento de fatura é inválida.");
@@ -356,11 +359,12 @@ var CompassoBackend_ = (() => {
     });
     uniqueIds(entries);
     const plans = array(backup.version === 2 ? backup.plans : [], "Planejamentos", LIMITS.plans).map((value) => {
+      var _a;
       const item = object(value);
       const clean = validatePlanInput(item);
       if (!version(item.version) || !timestamp(item.createdAt) || !timestamp(item.updatedAt) || item.archived !== void 0 && typeof item.archived !== "boolean" || item.archivedFromMonth !== void 0 && (!isValidMonth(item.archivedFromMonth) || item.archived !== true)) throw new AppError("A cópia contém um planejamento inválido.");
       if (clean.accountId && !accountIds.has(clean.accountId)) throw new AppError("O planejamento contém uma conta inexistente.");
-      if (clean.categoryId && categoryById.get(clean.categoryId)?.kind !== (clean.type === "salary" ? "income" : "expense")) throw new AppError("O planejamento contém uma categoria incompatível.");
+      if (clean.categoryId && ((_a = categoryById.get(clean.categoryId)) == null ? void 0 : _a.kind) !== (clean.type === "salary" ? "income" : "expense")) throw new AppError("O planejamento contém uma categoria incompatível.");
       return {
         ...clean,
         id: text2(item.id, "Planejamento", 100),
@@ -464,6 +468,7 @@ var CompassoBackend_ = (() => {
       this.clock = clock;
     }
     apply(original, command2) {
+      var _a;
       const state = cloneValue_(original);
       try {
         const payload = object2(command2.payload, "Parâmetros");
@@ -499,7 +504,7 @@ var CompassoBackend_ = (() => {
             result = this.savePlan(state, payload.input, optionalId(payload.id), payload.expectedVersion);
             break;
           case "deletePlan":
-            result = this.deletePlan(state, text3(payload.id, "Planejamento", 100), payload.expectedVersion, month(payload.fromMonth ?? this.today().slice(0, 7)));
+            result = this.deletePlan(state, text3(payload.id, "Planejamento", 100), payload.expectedVersion, month((_a = payload.fromMonth) != null ? _a : this.today().slice(0, 7)));
             break;
           case "realizePlan":
             result = this.realizePlan(state, text3(payload.planId, "Planejamento", 100), month(payload.month));
@@ -537,8 +542,15 @@ var CompassoBackend_ = (() => {
     }
     checkLimits(state) {
       if (state.accounts.length > 20 || state.categories.length > 100 || state.entries.length > 1e3 || state.plans.length > 1e3 || state.occurrences.length > 12e3) throw new AppError("O limite de registros desta demonstração foi atingido. Reinicie a demonstração para continuar.", 400);
-      const total = [...state.accounts.map((item) => item.openingBalanceCents), ...state.entries.map((item) => item.amountCents), ...state.plans.map((item) => item.amountCents)].reduce((sum, value) => sum + BigInt(Math.abs(value)), 0n);
-      if (total > BigInt(Number.MAX_SAFE_INTEGER)) throw new AppError("A soma dos valores ultrapassa o limite seguro da demonstração.", 400);
+      let total = 0;
+      const values = [...state.accounts.map((item) => item.openingBalanceCents), ...state.entries.map((item) => item.amountCents), ...state.plans.map((item) => item.amountCents)];
+      for (const value of values) {
+        const amount = Math.abs(value);
+        if (!Number.isSafeInteger(amount) || amount > Number.MAX_SAFE_INTEGER - total) {
+          throw new AppError("A soma dos valores ultrapassa o limite seguro da demonstração.", 400);
+        }
+        total += amount;
+      }
       for (const plan of state.plans) {
         if (plan.type === "installment" && !Number.isSafeInteger(plan.amountCents * (plan.totalInstallments - plan.installmentNumber))) throw new AppError("O saldo futuro das parcelas ultrapassa o limite permitido.", 400);
       }
@@ -578,6 +590,7 @@ var CompassoBackend_ = (() => {
       };
     }
     saveEntry(state, raw, id, expectedVersion) {
+      var _a, _b, _c, _d;
       const input = object2(raw, "Lançamento");
       const clean = this.inputEntry(input);
       this.account(state, clean.accountId);
@@ -586,10 +599,10 @@ var CompassoBackend_ = (() => {
       const existing = id ? state.entries.find((entry2) => entry2.id === id) : void 0;
       if (id && !existing) throw new AppError("O lançamento não foi encontrado.", 404);
       if (existing) requireVersion(existing.version, expectedVersion);
-      if (existing?.planId && clean.planId && (existing.planId !== clean.planId || existing.planMonth !== clean.planMonth)) throw new AppError("O vínculo de um lançamento com o planejamento não pode ser trocado.", 400);
-      const planId = existing?.planId ?? clean.planId;
-      const planMonth = existing?.planMonth ?? clean.planMonth;
-      const isCardPayment = input.isCardPayment === void 0 ? existing?.isCardPayment : input.isCardPayment;
+      if ((existing == null ? void 0 : existing.planId) && clean.planId && (existing.planId !== clean.planId || existing.planMonth !== clean.planMonth)) throw new AppError("O vínculo de um lançamento com o planejamento não pode ser trocado.", 400);
+      const planId = (_a = existing == null ? void 0 : existing.planId) != null ? _a : clean.planId;
+      const planMonth = (_b = existing == null ? void 0 : existing.planMonth) != null ? _b : clean.planMonth;
+      const isCardPayment = input.isCardPayment === void 0 ? existing == null ? void 0 : existing.isCardPayment : input.isCardPayment;
       if (isCardPayment && (clean.kind !== "expense" || planId)) throw new AppError("O pagamento de fatura deve ser uma despesa bancária sem vínculo com outro compromisso.", 400);
       if (planId) {
         const plan = this.plan(state, planId);
@@ -598,11 +611,11 @@ var CompassoBackend_ = (() => {
       }
       const entry = {
         ...clean,
-        id: existing?.id ?? generateId_(),
-        version: nextVersion(existing?.version),
-        createdAt: existing?.createdAt ?? this.now(),
+        id: (_c = existing == null ? void 0 : existing.id) != null ? _c : generateId_(),
+        version: nextVersion(existing == null ? void 0 : existing.version),
+        createdAt: (_d = existing == null ? void 0 : existing.createdAt) != null ? _d : this.now(),
         updatedAt: this.now(),
-        ...existing?.isExample ? { isExample: true } : {},
+        ...(existing == null ? void 0 : existing.isExample) ? { isExample: true } : {},
         ...planId ? { planId, planMonth } : {},
         ...isCardPayment ? { isCardPayment: true } : {}
       };
@@ -612,6 +625,7 @@ var CompassoBackend_ = (() => {
       return entry;
     }
     writeOccurrence(state, entry, removeLink = false) {
+      var _a;
       if (!entry.planId || !entry.planMonth) return;
       const plan = this.plan(state, entry.planId);
       const previous = state.occurrences.find((item) => item.planId === entry.planId && item.month === entry.planMonth);
@@ -621,7 +635,7 @@ var CompassoBackend_ = (() => {
         month: entry.planMonth,
         status: !removeLink && entry.status === "paid" ? "done" : "pending",
         updatedAt: this.now(),
-        snapshot: previous?.snapshot ?? { type: plan.type, description: entry.description, amountCents: entry.amountCents, dueOn: entry.dueOn },
+        snapshot: (_a = previous == null ? void 0 : previous.snapshot) != null ? _a : { type: plan.type, description: entry.description, amountCents: entry.amountCents, dueOn: entry.dueOn },
         ...!removeLink ? { linkedEntryId: entry.id } : {}
       };
       if (previous) state.occurrences[state.occurrences.indexOf(previous)] = occurrence;
@@ -673,14 +687,15 @@ var CompassoBackend_ = (() => {
       state.settings = { ...state.settings, displayName: input.displayName.trim(), exampleMode: false };
     }
     savePlan(state, raw, id, expectedVersion) {
+      var _a, _b, _c;
       const clean = validatePlanInput(object2(raw, "Planejamento"));
       if (clean.accountId) this.account(state, clean.accountId);
-      if (clean.categoryId && state.categories.find((item) => item.id === clean.categoryId)?.kind !== (clean.type === "salary" ? "income" : "expense")) throw new AppError("Escolha uma categoria compatível com o planejamento.", 400);
+      if (clean.categoryId && ((_a = state.categories.find((item) => item.id === clean.categoryId)) == null ? void 0 : _a.kind) !== (clean.type === "salary" ? "income" : "expense")) throw new AppError("Escolha uma categoria compatível com o planejamento.", 400);
       const existing = id ? this.plan(state, id) : void 0;
       if (existing) requireVersion(existing.version, expectedVersion);
-      if (existing?.archived) throw new AppError("Este compromisso foi encerrado. Cadastre outro para iniciar uma nova previsão.", 409);
+      if (existing == null ? void 0 : existing.archived) throw new AppError("Este compromisso foi encerrado. Cadastre outro para iniciar uma nova previsão.", 409);
       if (existing && existing.type !== clean.type && state.occurrences.some((item) => item.planId === id)) throw new AppError("Um compromisso com registros mensais não pode mudar de tipo. Cadastre outro compromisso.", 400);
-      const plan = { ...clean, id: existing?.id ?? generateId_(), version: nextVersion(existing?.version), createdAt: existing?.createdAt ?? this.now(), updatedAt: this.now() };
+      const plan = { ...clean, id: (_b = existing == null ? void 0 : existing.id) != null ? _b : generateId_(), version: nextVersion(existing == null ? void 0 : existing.version), createdAt: (_c = existing == null ? void 0 : existing.createdAt) != null ? _c : this.now(), updatedAt: this.now() };
       if (existing) state.plans[state.plans.indexOf(existing)] = plan;
       else state.plans.push(plan);
       return plan;
@@ -694,8 +709,9 @@ var CompassoBackend_ = (() => {
       return archived;
     }
     findPlanEntry(state, planId, selectedMonth) {
+      var _a;
       const occurrence = state.occurrences.find((item) => item.planId === planId && item.month === selectedMonth);
-      const entry = state.entries.find((item) => item.id === occurrence?.linkedEntryId) ?? state.entries.find((item) => item.planId === planId && item.planMonth === selectedMonth);
+      const entry = (_a = state.entries.find((item) => item.id === (occurrence == null ? void 0 : occurrence.linkedEntryId))) != null ? _a : state.entries.find((item) => item.planId === planId && item.planMonth === selectedMonth);
       if (entry) this.writeOccurrence(state, entry);
       return entry;
     }
@@ -709,20 +725,22 @@ var CompassoBackend_ = (() => {
       return this.saveEntry(state, { description: row.plan.description, kind: plan.type === "salary" ? "income" : "expense", amountCents: row.amountCents, categoryId: plan.categoryId, accountId: plan.accountId, occurredOn: row.dueOn, dueOn: row.dueOn, status: "pending", planId, planMonth: selectedMonth });
     }
     settlePlan(state, planId, selectedMonth, options) {
-      const paidOn = options.paidOn ?? this.today();
+      var _a, _b;
+      const paidOn = (_a = options.paidOn) != null ? _a : this.today();
       if (!isValidDate(paidOn) || paidOn > this.today()) throw new AppError("Informe uma data de pagamento ou recebimento válida, até hoje.", 400);
       const entry = this.realizePlan(state, planId, selectedMonth);
       if (entry.status === "paid") return entry;
-      return this.saveEntry(state, { ...entry, status: "paid", paidOn, accountId: options.accountId ?? entry.accountId }, entry.id, entry.version);
+      return this.saveEntry(state, { ...entry, status: "paid", paidOn, accountId: (_b = options.accountId) != null ? _b : entry.accountId }, entry.id, entry.version);
     }
     setPlanningChecked(state, planId, selectedMonth, checked) {
+      var _a;
       if (typeof checked !== "boolean") throw new AppError("Informe uma situação válida para o compromisso.", 400);
       const plan = this.plan(state, planId);
       if (bankPlan(plan)) throw new AppError("Receitas e contas devem ser registradas ou pagas por um lançamento vinculado.", 400);
       const previous = state.occurrences.find((item) => item.planId === planId && item.month === selectedMonth);
       const row = rowsForMonth([plan], previous ? [previous] : [], [], selectedMonth)[0];
       if (!row) throw new AppError("Este compromisso não possui previsão no mês selecionado.", 400);
-      const occurrence = { id: `${planId}:${selectedMonth}`, planId, month: selectedMonth, status: checked ? "done" : "pending", updatedAt: this.now(), snapshot: previous?.snapshot ?? snapshotForRow(row) };
+      const occurrence = { id: `${planId}:${selectedMonth}`, planId, month: selectedMonth, status: checked ? "done" : "pending", updatedAt: this.now(), snapshot: (_a = previous == null ? void 0 : previous.snapshot) != null ? _a : snapshotForRow(row) };
       if (previous) state.occurrences[state.occurrences.indexOf(previous)] = occurrence;
       else state.occurrences.push(occurrence);
       return occurrence;
@@ -923,7 +941,7 @@ var CompassoBackend_ = (() => {
     let parsed;
     try {
       parsed = JSON.parse(string(raw));
-    } catch {
+    } catch (e) {
       throw storageError();
     }
     if (!parsed || typeof parsed !== "object") throw storageError();
@@ -1098,9 +1116,18 @@ var CompassoBackend_ = (() => {
       };
       append("Contas", state.accounts.map((item) => [...head, item.id, item.name, item.type, item.openingBalanceCents, item.createdAt]));
       append("Categorias", state.categories.map((item) => [...head, item.id, item.name, item.kind, item.color]));
-      append("Lancamentos", state.entries.map((item) => [...head, item.id, item.description, item.kind, item.amountCents, item.categoryId, item.accountId, item.occurredOn, item.dueOn, item.status, item.paidOn ?? "", item.version, item.createdAt, item.updatedAt, item.isExample ?? "", item.planId ?? "", item.planMonth ?? "", item.isCardPayment ?? ""]));
-      append("Planejamentos", state.plans.map((item) => [...head, item.id, item.type, item.description, item.amountCents, item.startMonth, item.dueDay, item.categoryId ?? "", item.accountId ?? "", item.cardName ?? "", item.installmentNumber ?? "", item.totalInstallments ?? "", item.endMonth ?? "", item.createdAt, item.updatedAt, item.version, item.archived ?? "", item.archivedFromMonth ?? ""]));
-      append("RegistrosMensais", state.occurrences.map((item) => [...head, item.id, item.planId, item.month, item.status, item.linkedEntryId ?? "", item.updatedAt, item.snapshot?.type ?? "", item.snapshot?.description ?? "", item.snapshot?.amountCents ?? "", item.snapshot?.dueOn ?? "", item.snapshot?.cardName ?? "", item.snapshot?.installmentNumber ?? "", item.snapshot?.totalInstallments ?? "", item.snapshot?.remainingAfterThisMonth ?? "", item.snapshot?.futureBalanceCents ?? "", item.snapshot?.lastDueOn ?? ""]));
+      append("Lancamentos", state.entries.map((item) => {
+        var _a, _b, _c, _d, _e;
+        return [...head, item.id, item.description, item.kind, item.amountCents, item.categoryId, item.accountId, item.occurredOn, item.dueOn, item.status, (_a = item.paidOn) != null ? _a : "", item.version, item.createdAt, item.updatedAt, (_b = item.isExample) != null ? _b : "", (_c = item.planId) != null ? _c : "", (_d = item.planMonth) != null ? _d : "", (_e = item.isCardPayment) != null ? _e : ""];
+      }));
+      append("Planejamentos", state.plans.map((item) => {
+        var _a, _b, _c, _d, _e, _f, _g, _h;
+        return [...head, item.id, item.type, item.description, item.amountCents, item.startMonth, item.dueDay, (_a = item.categoryId) != null ? _a : "", (_b = item.accountId) != null ? _b : "", (_c = item.cardName) != null ? _c : "", (_d = item.installmentNumber) != null ? _d : "", (_e = item.totalInstallments) != null ? _e : "", (_f = item.endMonth) != null ? _f : "", item.createdAt, item.updatedAt, item.version, (_g = item.archived) != null ? _g : "", (_h = item.archivedFromMonth) != null ? _h : ""];
+      }));
+      append("RegistrosMensais", state.occurrences.map((item) => {
+        var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u;
+        return [...head, item.id, item.planId, item.month, item.status, (_a = item.linkedEntryId) != null ? _a : "", item.updatedAt, (_c = (_b = item.snapshot) == null ? void 0 : _b.type) != null ? _c : "", (_e = (_d = item.snapshot) == null ? void 0 : _d.description) != null ? _e : "", (_g = (_f = item.snapshot) == null ? void 0 : _f.amountCents) != null ? _g : "", (_i = (_h = item.snapshot) == null ? void 0 : _h.dueOn) != null ? _i : "", (_k = (_j = item.snapshot) == null ? void 0 : _j.cardName) != null ? _k : "", (_m = (_l = item.snapshot) == null ? void 0 : _l.installmentNumber) != null ? _m : "", (_o = (_n = item.snapshot) == null ? void 0 : _n.totalInstallments) != null ? _o : "", (_q = (_p = item.snapshot) == null ? void 0 : _p.remainingAfterThisMonth) != null ? _q : "", (_s = (_r = item.snapshot) == null ? void 0 : _r.futureBalanceCents) != null ? _s : "", (_u = (_t = item.snapshot) == null ? void 0 : _t.lastDueOn) != null ? _u : ""];
+      }));
       append("Preferencias", [[...head, state.settings.id, state.settings.displayName, state.settings.exampleMode]]);
     }
     createSession(tokenHash, state) {
@@ -1148,7 +1175,7 @@ var CompassoBackend_ = (() => {
       let result;
       try {
         result = JSON.parse(command2.resultJson);
-      } catch {
+      } catch (e) {
         throw storageError();
       }
       return { result, ...command2.fingerprint ? { fingerprint: command2.fingerprint } : {} };
@@ -1160,14 +1187,14 @@ var CompassoBackend_ = (() => {
       let resultJson;
       try {
         resultJson = JSON.stringify(result === void 0 ? null : result);
-      } catch {
+      } catch (e) {
         throw new AppError("O resultado do comando não pode ser armazenado.", 400);
       }
       if (resultJson === void 0 || resultJson.length > 5e4) throw new AppError("O resultado do comando excede o limite de armazenamento.", 400);
       this.quota(after, false);
       const next = { revision: expectedRevision + 1, snapshotId: this.uuid() };
       this.appendSnapshot(sessionId, next.snapshotId, next.revision, after);
-      this.port.append("Comandos", [[sessionId, next.snapshotId, next.revision, session.pointer.snapshotId, commandId, resultJson, this.now().toISOString(), fingerprint ?? ""]]);
+      this.port.append("Comandos", [[sessionId, next.snapshotId, next.revision, session.pointer.snapshotId, commandId, resultJson, this.now().toISOString(), fingerprint != null ? fingerprint : ""]]);
       this.port.flush();
       const latest = this.activeSession(sessionId);
       if (latest.revision !== expectedRevision || latest.pointer.snapshotId !== session.pointer.snapshotId) return { applied: false, revision: latest.revision };
@@ -1221,20 +1248,21 @@ var CompassoBackend_ = (() => {
     return JSON.stringify(error instanceof AppError ? { error: error.message, status: error.status } : { error: "Não foi possível concluir a operação no Google Sheets. Tente novamente.", status: 503 });
   }
   function canonical(value, depth = 0) {
+    var _a;
     if (depth > 30) throw new AppError("O comando possui uma estrutura muito profunda.", 400);
     if (Array.isArray(value)) return `[${value.map((item) => canonical(item, depth + 1)).join(",")}]`;
     if (value && typeof value === "object") {
       const object3 = value;
       return `{${Object.keys(object3).sort().map((key) => `${JSON.stringify(key)}:${canonical(object3[key], depth + 1)}`).join(",")}}`;
     }
-    return JSON.stringify(value) ?? "null";
+    return (_a = JSON.stringify(value)) != null ? _a : "null";
   }
   function parseCommand(raw) {
     if (typeof raw !== "string" || raw.length > 25e5) throw new AppError("O comando enviado é inválido ou muito grande.", 400);
     let parsed;
     try {
       parsed = JSON.parse(raw);
-    } catch {
+    } catch (e) {
       throw new AppError("Não foi possível ler o comando enviado.", 400);
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new AppError("O comando enviado é inválido.", 400);
@@ -1258,7 +1286,7 @@ var CompassoBackend_ = (() => {
       } finally {
         if (acquired) {
           try {
-            lock?.releaseLock();
+            lock == null ? void 0 : lock.releaseLock();
           } catch (error) {
             output = serializeError(error);
           }
@@ -1322,6 +1350,7 @@ var CompassoBackend_ = (() => {
         return response(state, session.revision, session.expiresAt, { sessionToken: token });
       }),
       command: (token, commandJson) => locked(() => {
+        var _a, _b;
         const { repository: repo } = repository();
         const session = authenticate(repo, token);
         const command2 = parseCommand(commandJson);
@@ -1330,10 +1359,10 @@ var CompassoBackend_ = (() => {
         const loaded = repo.load(session.id);
         if (replay) {
           if (replay.fingerprint !== fingerprint) throw new AppError("Este identificador de comando já foi usado com outros dados.", 409);
-          return response(loaded.state, loaded.revision, session.expiresAt, { result: replay.result ?? null });
+          return response(loaded.state, loaded.revision, session.expiresAt, { result: (_a = replay.result) != null ? _a : null });
         }
         const applied = new FinanceService(clock).apply(loaded.state, command2);
-        const result = applied.result ?? null;
+        const result = (_b = applied.result) != null ? _b : null;
         const committed = repo.commit(session.id, loaded.revision, command2.id, loaded.state, applied.state, result, fingerprint);
         if (!committed.applied) throw new AppError("Os dados foram alterados. Atualize a demonstração e tente novamente.", 409);
         return response(applied.state, committed.revision, session.expiresAt, { result });
