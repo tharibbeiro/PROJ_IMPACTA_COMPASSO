@@ -21,7 +21,7 @@ export function realizePlan(planId: string, month: string): Promise<Entry> {
   return runRemoteCommand('realizePlan', { planId, month });
 }
 
-export function settlePlan(planId: string, month: string, options: { paidOn?: string; accountId?: string } = {}): Promise<Entry> {
+export function settlePlan(planId: string, month: string, options: { paidOn?: string; accountId?: string; amountCents?: number; expectedEntryVersion?: number } = {}): Promise<Entry> {
   return runRemoteCommand('settlePlan', { planId, month, options });
 }
 

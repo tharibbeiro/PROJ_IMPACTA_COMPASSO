@@ -19,11 +19,15 @@ Quando o dia escolhido não existe no mês, o calendário usa o último dia real
 
 A previsão usa um único campo com dia, mês e ano. Essa data define o primeiro vencimento e o dia da repetição mensal; compromissos anuais repetem o mês e o dia nos anos seguintes. O último mês, quando informado, limita a repetição. Ao editar um item com dia 31 cujo primeiro mês tem menos dias, salvar sem alterar a data conserva a regra original do dia 31.
 
-O formulário permite marcar **Já recebido**, **Já pago**, **Já conferido na fatura** ou **Valor já separado**, conforme o tipo. Pagamentos e recebimentos usam um campo de data completo, que não aceita data futura. Cartões e reservas usam somente a conferência e não criam um movimento bancário.
+O formulário permite marcar **Já recebido**, **Já pago**, **Já conferido na fatura** ou **Valor já separado**, conforme o tipo. Pagamentos e recebimentos permitem confirmar o valor efetivo, a conta e uma data completa, que não aceita data futura. Esses dados podem ser diferentes da previsão. Cartões e reservas usam somente a conferência e não criam um movimento bancário.
 
 Na inclusão, a confirmação pertence ao mês da primeira data escolhida. Na edição, ela pertence ao mês consultado no painel, mesmo quando o recebimento ou pagamento ocorreu em outro mês. A interface pede uma confirmação adicional quando as datas pertencem a meses diferentes.
 
-A previsão e uma eventual alteração da confirmação são enviadas em um único comando e gravadas juntas. Se qualquer validação falhar, nenhuma das duas alterações é aplicada. Ao editar somente a previsão, o estado do pagamento existente não é reenviado. Alterar explicitamente a data ou desmarcar um pagamento atualiza o lançamento vinculado, sem criar outro; seus valores, descrição e vencimento continuam preservados.
+A previsão e uma eventual alteração da confirmação são enviadas em um único comando e gravadas juntas. Se qualquer validação falhar, nenhuma das duas alterações é aplicada. Ao editar somente a previsão, o estado do pagamento existente não é reenviado. Alterar explicitamente o valor efetivo, a conta ou a data atualiza o mesmo lançamento vinculado e recalcula o saldo, sem criar outro recebimento ou pagamento. A descrição, o vencimento e a competência do lançamento continuam preservados.
+
+Na confirmação de um item pendente, o valor previsto e a conta padrão servem como ponto de partida para os campos realizados. Ao editar um item já pago ou recebido, os campos mostram o valor e a conta efetivamente registrados. A opção **Usar valor previsto** permite copiar a previsão para o valor realizado antes de salvar. Desmarcar **Já recebido** ou **Já pago** reabre o lançamento e remove seu efeito do saldo.
+
+O saldo de cada conta é seu saldo inicial, mais os recebimentos confirmados nela, menos os pagamentos confirmados nela. Corrigir um recebimento de R$ 180,00 para R$ 200,00 aumenta o saldo em R$ 20,00. Corrigir sua conta retira o efeito da conta anterior e aplica na nova; não cria uma segunda receita.
 
 ## Evitar duplicações
 

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAppsScriptController } from '../../../backend/apps-script';
 import { runtimeFixture } from '../../../backend/repositories/google-sheets.fake';
-import { accountBalance } from '../../../shared/domain/finance';
+import { accountBalance, monthSummary } from '../../../shared/domain/finance';
 import { monthlyPlanningSummary, rowsForMonth } from '../../../shared/domain/planning';
 
 type Method = 'compassoBootstrap' | 'compassoCreateDemoSession' | 'compassoCommand';
@@ -117,5 +117,114 @@ describe('primeiro acesso com transporte realista do Apps Script', () => {
       expect(row).toMatchObject({ amountCents: 20000, dueOn: `${month}-30`, plan: { description: input.description }, linkedEntry: { description: 'Recebimento corrigido', amountCents: 490000, paidOn: `${month}-06` } });
       expect(monthlyPlanningSummary(planned.plans, planned.occurrences, financial.entries, month).expectedIncomeCents).toBe(147500);
     } finally { unsubscribe(); }
+  });
+
+  it('confirma e corrige o recebimento na conta escolhida, recalculando o saldo sem duplicar lançamentos', async () => {
+    const { calls } = applicationBridge();
+    const repository = await import('./repository');
+    const planning = await import('./planning-repository');
+    await repository.initialize();
+    const previous = await repository.snapshot();
+    const initialPlanning = await planning.getPlanningSnapshot();
+    const plan = initialPlanning.plans.find((item) => item.description === 'Adiantamento fictício')!;
+    const pending = previous.entries.find((entry) => entry.planId === plan.id)!;
+    expect(pending.status).toBe('pending');
+    const month = plan.startMonth;
+    const source = previous.accounts.find((account) => account.id === pending.accountId)!;
+    const destination = previous.accounts.find((account) => account.id !== source.id)!;
+    const originalSource = accountBalance(source, previous.entries);
+    const originalDestination = accountBalance(destination, previous.entries);
+    const originalSummary = monthSummary(previous.accounts, previous.entries, month);
+    const input = {
+      type: plan.type, description: plan.description, amountCents: 20000,
+      startMonth: month, dueDay: plan.dueDay, accountId: plan.accountId, categoryId: plan.categoryId,
+    };
+    calls.length = 0;
+
+    let currentPlan = await planning.savePlan(input, plan.id, plan.version, {
+      month, completed: true, paidOn: `${month}-10`, amountCents: 20000,
+      accountId: destination.id, expectedEntryVersion: pending.version,
+    }, month);
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(calls[0].args[1] as string)).toMatchObject({
+      type: 'savePlan', payload: { completion: { amountCents: 20000, accountId: destination.id, expectedEntryVersion: pending.version } },
+    });
+    let financial = await repository.snapshot();
+    let received = financial.entries.find((entry) => entry.id === pending.id)!;
+    expect(financial.entries).toHaveLength(previous.entries.length);
+    expect(received).toMatchObject({ id: pending.id, amountCents: 20000, accountId: destination.id, status: 'paid', paidOn: `${month}-10` });
+    expect(accountBalance(source, financial.entries)).toBe(originalSource);
+    expect(accountBalance(destination, financial.entries)).toBe(originalDestination + 20000);
+    expect(monthSummary(financial.accounts, financial.entries, month)).toMatchObject({
+      balanceCents: originalSummary.balanceCents + 20000,
+      paidIncomeCents: originalSummary.paidIncomeCents + 20000,
+    });
+
+    currentPlan = await planning.savePlan(input, plan.id, currentPlan.version, {
+      month, completed: true, paidOn: `${month}-11`, amountCents: 18000,
+      accountId: destination.id, expectedEntryVersion: received.version,
+    }, month);
+    financial = await repository.snapshot();
+    received = financial.entries.find((entry) => entry.id === pending.id)!;
+    expect(financial.entries).toHaveLength(previous.entries.length);
+    expect(received).toMatchObject({ amountCents: 18000, accountId: destination.id, paidOn: `${month}-11` });
+    expect(accountBalance(destination, financial.entries)).toBe(originalDestination + 18000);
+    expect(monthSummary(financial.accounts, financial.entries, month).balanceCents).toBe(originalSummary.balanceCents + 18000);
+
+    currentPlan = await planning.savePlan(input, plan.id, currentPlan.version, {
+      month, completed: true, paidOn: `${month}-11`, amountCents: 18000,
+      accountId: source.id, expectedEntryVersion: received.version,
+    }, month);
+    financial = await repository.snapshot();
+    received = financial.entries.find((entry) => entry.id === pending.id)!;
+    expect(accountBalance(destination, financial.entries)).toBe(originalDestination);
+    expect(accountBalance(source, financial.entries)).toBe(originalSource + 18000);
+    expect(monthSummary(financial.accounts, financial.entries, month).balanceCents).toBe(originalSummary.balanceCents + 18000);
+
+    currentPlan = await planning.savePlan({ ...input, amountCents: 25000 }, plan.id, currentPlan.version, undefined, month);
+    financial = await repository.snapshot();
+    expect(financial.entries.find((entry) => entry.id === pending.id)).toEqual(received);
+    expect(accountBalance(source, financial.entries)).toBe(originalSource + 18000);
+    const planned = await planning.getPlanningSnapshot();
+    expect(rowsForMonth(planned.plans, planned.occurrences, financial.entries, month).find((row) => row.plan.id === plan.id)).toMatchObject({
+      amountCents: 25000, linkedEntry: { amountCents: 18000, accountId: source.id, status: 'paid' },
+    });
+
+    await planning.savePlan({ ...input, amountCents: 25000 }, plan.id, currentPlan.version, {
+      month, completed: false, expectedEntryVersion: received.version,
+    }, month);
+    await repository.refreshFromServer();
+    financial = await repository.snapshot();
+    expect(financial.entries).toHaveLength(previous.entries.length);
+    expect(financial.entries.find((entry) => entry.id === pending.id)).toMatchObject({ amountCents: 18000, accountId: source.id, status: 'pending' });
+    expect(financial.entries.find((entry) => entry.id === pending.id)?.paidOn).toBeUndefined();
+    expect(accountBalance(source, financial.entries)).toBe(originalSource);
+    expect(accountBalance(destination, financial.entries)).toBe(originalDestination);
+    expect(monthSummary(financial.accounts, financial.entries, month)).toMatchObject({
+      balanceCents: originalSummary.balanceCents, paidIncomeCents: originalSummary.paidIncomeCents,
+    });
+  });
+
+  it('confirma pelo registro de recebimento com o valor informado e mantém a atualização depois de recarregar', async () => {
+    applicationBridge();
+    const repository = await import('./repository');
+    const planning = await import('./planning-repository');
+    await repository.initialize();
+    const before = await repository.snapshot();
+    const plans = await planning.getPlanningSnapshot();
+    const plan = plans.plans.find((item) => item.description === 'Adiantamento fictício')!;
+    const pending = before.entries.find((entry) => entry.planId === plan.id)!;
+    const account = before.accounts.find((item) => item.id !== pending.accountId)!;
+    const originalBalance = accountBalance(account, before.entries);
+    const received = await planning.settlePlan(plan.id, plan.startMonth, {
+      amountCents: 20000, accountId: account.id, paidOn: `${plan.startMonth}-10`, expectedEntryVersion: pending.version,
+    });
+    expect(received).toMatchObject({ id: pending.id, amountCents: 20000, accountId: account.id, status: 'paid' });
+    await repository.refreshFromServer();
+    const after = await repository.snapshot();
+    expect(after.entries).toHaveLength(before.entries.length);
+    expect(after.entries.find((entry) => entry.id === pending.id)).toEqual(received);
+    expect(accountBalance(account, after.entries)).toBe(originalBalance + 20000);
+    expect(monthSummary(after.accounts, after.entries, plan.startMonth).balanceCents).toBe(monthSummary(before.accounts, before.entries, plan.startMonth).balanceCents + 20000);
   });
 });

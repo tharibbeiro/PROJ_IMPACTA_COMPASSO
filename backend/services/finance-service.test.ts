@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AppError, type AcademicState, type FinanceCommand } from '../contracts';
-import { accountBalance } from '../../shared/domain/finance';
+import { accountBalance, monthSummary } from '../../shared/domain/finance';
 import { monthlyPlanningSummary, rowsForMonth } from '../../shared/domain/planning';
 import type { Entry, EntryInput } from '../../shared/domain/types';
 import type { PlanInput, PlanItem, PlanOccurrence } from '../../shared/domain/planning-types';
@@ -399,5 +399,148 @@ describe('FinanceService: edição da previsão por competência', () => {
     const before = structuredClone(saved.state);
     expect(() => run(saved.state, 'savePlan', { id: saved.result.id, expectedVersion: saved.result.version, referenceMonth: '2026-13', input: { ...planInput(), amountCents: 20000 } })).toThrow('mês válido');
     expect(saved.state).toEqual(before);
+  });
+});
+
+describe('FinanceService: confirmação dos valores realizados', () => {
+  const incomePlan = (): PlanInput => ({ ...planInput(), type: 'salary', categoryId: 'income', description: 'Receita prevista', amountCents: 510000, dueDay: 5 });
+  const withSecondAccount = (): AcademicState => {
+    const state = base();
+    state.accounts.push({ id: 'other-account', name: 'Outra conta', type: 'bank', openingBalanceCents: 3000, createdAt: now.toISOString() });
+    return state;
+  };
+
+  it('cria recebimento pelo valor e pela conta confirmados, separados da previsão', () => {
+    const saved = run<PlanItem>(withSecondAccount(), 'savePlan', {
+      input: incomePlan(), completion: { month: '2026-11', completed: true, paidOn: '2026-11-05', amountCents: 20000, accountId: 'other-account' },
+    });
+    expect(saved.state.entries).toHaveLength(1);
+    expect(saved.state.entries[0]).toMatchObject({ planId: saved.result.id, kind: 'income', amountCents: 20000, accountId: 'other-account', status: 'paid' });
+    expect(accountBalance(saved.state.accounts[0], saved.state.entries)).toBe(100000);
+    expect(accountBalance(saved.state.accounts[1], saved.state.entries)).toBe(23000);
+    expect(monthSummary(saved.state.accounts, saved.state.entries, '2026-11')).toMatchObject({ balanceCents: 123000, paidIncomeCents: 20000 });
+    expect(monthlyPlanningSummary(saved.state.plans, saved.state.occurrences, saved.state.entries, '2026-11').expectedIncomeCents).toBe(510000);
+  });
+
+  it.each(['pending', 'paid'] as const)('atualiza recebimento %s pelo valor confirmado no mesmo lançamento e recalcula o saldo', (status) => {
+    const input = incomePlan();
+    const saved = run<PlanItem>(base(), 'savePlan', { input });
+    const issued = run<Entry>(saved.state, 'realizePlan', { planId: saved.result.id, month: '2026-11' });
+    const original = status === 'paid' ? run<Entry>(issued.state, 'settlePlan', { planId: saved.result.id, month: '2026-11', options: { paidOn: '2026-11-05' } }) : issued;
+    const previous = original.result;
+    const changed = run<PlanItem>(original.state, 'savePlan', {
+      input: { ...input, amountCents: 21000 }, id: saved.result.id, expectedVersion: saved.result.version,
+      completion: { month: '2026-11', completed: true, paidOn: '2026-11-06', amountCents: 20000, accountId: 'account', expectedEntryVersion: previous.version },
+    });
+    expect(changed.state.entries).toHaveLength(1);
+    const entry = changed.state.entries[0];
+    expect(entry).toMatchObject({ id: previous.id, status: 'paid', amountCents: 20000, accountId: 'account', paidOn: '2026-11-06', version: previous.version + 1, description: previous.description, dueOn: previous.dueOn, occurredOn: previous.occurredOn });
+    expect(accountBalance(changed.state.accounts[0], changed.state.entries)).toBe(120000);
+    expect(monthSummary(changed.state.accounts, changed.state.entries, '2026-11')).toMatchObject({ balanceCents: 120000, paidIncomeCents: 20000 });
+    const repeated = run<PlanItem>(changed.state, 'savePlan', {
+      input: { ...input, amountCents: 21000 }, id: saved.result.id, expectedVersion: changed.result.version,
+      completion: { month: '2026-11', completed: true, paidOn: '2026-11-06', amountCents: 20000, accountId: 'account', expectedEntryVersion: entry.version },
+    });
+    expect(repeated.state.entries).toEqual(changed.state.entries);
+    expect(monthlyPlanningSummary(changed.state.plans, changed.state.occurrences, changed.state.entries, '2026-11').expectedIncomeCents).toBe(21000);
+  });
+
+  it('corrigir a conta retira o valor da conta antiga e aplica na nova sem duplicar receita', () => {
+    const input = incomePlan();
+    const saved = run<PlanItem>(withSecondAccount(), 'savePlan', { input, completion: { month: '2026-11', completed: true, paidOn: '2026-11-05', amountCents: 20000, accountId: 'account' } });
+    const previous = saved.state.entries[0];
+    const moved = run<PlanItem>(saved.state, 'savePlan', {
+      input, id: saved.result.id, expectedVersion: saved.result.version,
+      completion: { month: '2026-11', completed: true, paidOn: previous.paidOn, amountCents: previous.amountCents, accountId: 'other-account', expectedEntryVersion: previous.version },
+    });
+    expect(moved.state.entries).toHaveLength(1);
+    expect(moved.state.entries[0]).toMatchObject({ id: previous.id, amountCents: 20000, accountId: 'other-account' });
+    expect(accountBalance(moved.state.accounts[0], moved.state.entries)).toBe(100000);
+    expect(accountBalance(moved.state.accounts[1], moved.state.entries)).toBe(23000);
+    expect(monthSummary(moved.state.accounts, moved.state.entries, '2026-11').balanceCents).toBe(monthSummary(saved.state.accounts, saved.state.entries, '2026-11').balanceCents);
+    const reopened = run<PlanItem>(moved.state, 'savePlan', { input, id: saved.result.id, expectedVersion: moved.result.version, completion: { month: '2026-11', completed: false, expectedEntryVersion: moved.state.entries[0].version } });
+    expect(accountBalance(reopened.state.accounts[0], reopened.state.entries)).toBe(100000);
+    expect(accountBalance(reopened.state.accounts[1], reopened.state.entries)).toBe(3000);
+    expect(reopened.state.entries[0]).toMatchObject({ id: previous.id, status: 'pending', amountCents: 20000, accountId: 'other-account' });
+    expect(reopened.state.entries[0].paidOn).toBeUndefined();
+  });
+
+  it('confirma o valor real de uma despesa e reduz o saldo por esse valor', () => {
+    const input = planInput();
+    const saved = run<PlanItem>(base(), 'savePlan', { input });
+    const pending = run<Entry>(saved.state, 'realizePlan', { planId: saved.result.id, month: '2026-11' });
+    const paid = run<Entry>(pending.state, 'settlePlan', { planId: saved.result.id, month: '2026-11', options: { paidOn: '2026-11-10', amountCents: 15000, accountId: 'account', expectedEntryVersion: pending.result.version } });
+    expect(paid.result).toMatchObject({ id: pending.result.id, amountCents: 15000, status: 'paid' });
+    expect(accountBalance(paid.state.accounts[0], paid.state.entries)).toBe(85000);
+    expect(monthSummary(paid.state.accounts, paid.state.entries, '2026-11')).toMatchObject({ balanceCents: 85000, paidExpenseCents: 15000 });
+    expect(monthlyPlanningSummary(paid.state.plans, paid.state.occurrences, paid.state.entries, '2026-11').fixedCents).toBe(12345);
+  });
+
+  it.each([
+    { amountCents: 0 }, { amountCents: -1 }, { amountCents: 1.5 }, { amountCents: null },
+    { accountId: 'missing' }, { accountId: '' }, { accountId: null },
+  ])('uma confirmação financeira inválida rejeita também a previsão: %j', (invalid) => {
+    const original = withSecondAccount();
+    const previous = structuredClone(original);
+    expect(() => run(original, 'savePlan', { input: incomePlan(), completion: { month: '2026-11', completed: true, paidOn: '2026-11-05', ...invalid } })).toThrow(AppError);
+    expect(original).toEqual(previous);
+  });
+
+  it.each([{ amountCents: 20000 }, { accountId: 'account' }])('rejeita dados financeiros em confirmação pendente: %j', (fields) => {
+    expect(() => run(base(), 'savePlan', { input: incomePlan(), completion: { month: '2026-11', completed: false, ...fields } })).toThrow('pendente');
+  });
+
+  it.each(['cardFixed', 'installment', 'reserve'] as const)('rejeita valor ou conta realizados ao conferir %s', (type) => {
+    const input: PlanInput = { type, description: 'Sem movimento bancário', amountCents: 10000, startMonth: '2026-11', dueDay: 10, ...(type !== 'reserve' ? { cardName: 'Cartão' } : {}), ...(type === 'installment' ? { installmentNumber: 1, totalInstallments: 2 } : {}) };
+    for (const fields of [{ amountCents: 20000 }, { accountId: 'account' }]) {
+      expect(() => run(base(), 'savePlan', { input, completion: { month: '2026-11', completed: true, ...fields } })).toThrow('sem registrar pagamento bancário');
+    }
+  });
+
+  it('correção explícita por settlePlan atualiza pago e conta sem alterar a data omitida nem duplicar', () => {
+    const saved = run<PlanItem>(withSecondAccount(), 'savePlan', { input: incomePlan(), completion: { month: '2026-11', completed: true, paidOn: '2026-11-05' } });
+    const previous = saved.state.entries[0];
+    const corrected = run<Entry>(saved.state, 'settlePlan', { planId: saved.result.id, month: '2026-11', options: { amountCents: 20000, accountId: 'other-account', expectedEntryVersion: previous.version } });
+    expect(corrected.result).toMatchObject({ id: previous.id, paidOn: '2026-11-05', amountCents: 20000, accountId: 'other-account', status: 'paid', version: previous.version + 1 });
+    expect(corrected.state.entries).toHaveLength(1);
+    expect(accountBalance(corrected.state.accounts[0], corrected.state.entries)).toBe(100000);
+    expect(accountBalance(corrected.state.accounts[1], corrected.state.entries)).toBe(23000);
+    const repeated = run<Entry>(corrected.state, 'settlePlan', { planId: saved.result.id, month: '2026-11', options: { amountCents: 20000, accountId: 'other-account', expectedEntryVersion: corrected.result.version } });
+    expect(repeated.state.entries).toEqual(corrected.state.entries);
+  });
+
+  it('settlePlan novo aceita valor e conta explícitos sem exigir versão inexistente', () => {
+    const saved = run<PlanItem>(withSecondAccount(), 'savePlan', { input: incomePlan() });
+    const received = run<Entry>(saved.state, 'settlePlan', { planId: saved.result.id, month: '2026-11', options: { amountCents: 20000, accountId: 'other-account', paidOn: '2026-11-06' } });
+    expect(received.state.entries).toHaveLength(1);
+    expect(received.result).toMatchObject({ amountCents: 20000, accountId: 'other-account', status: 'paid', paidOn: '2026-11-06' });
+  });
+
+  it.each(['amount', 'account'] as const)('settlePlan exige versão atual com %s explícito, mesmo sem mudança do valor', (field) => {
+    const saved = run<PlanItem>(base(), 'savePlan', { input: incomePlan(), completion: { month: '2026-11', completed: true, paidOn: '2026-11-05' } });
+    const previous = saved.state.entries[0];
+    const fields = field === 'amount' ? { amountCents: previous.amountCents } : { accountId: previous.accountId };
+    for (const expectedEntryVersion of [undefined, previous.version - 1]) {
+      expect(() => run(saved.state, 'settlePlan', { planId: saved.result.id, month: '2026-11', options: { ...fields, ...(expectedEntryVersion === undefined ? {} : { expectedEntryVersion }) } })).toThrow('alterado');
+      expect(saved.state.entries[0]).toEqual(previous);
+    }
+  });
+
+  it('settlePlan não recria o lançamento removido quando a confirmação informa sua versão', () => {
+    const saved = run<PlanItem>(base(), 'savePlan', { input: incomePlan(), completion: { month: '2026-11', completed: true, paidOn: '2026-11-05' } });
+    const previous = saved.state.entries[0];
+    const deleted = run(saved.state, 'deleteEntry', { id: previous.id, expectedVersion: previous.version });
+    expect(() => run(deleted.state, 'settlePlan', { planId: saved.result.id, month: '2026-11', options: { amountCents: 20000, accountId: 'account', expectedEntryVersion: previous.version } })).toThrow('alterado');
+    expect(deleted.state.entries).toHaveLength(0);
+  });
+
+  it('savePlan não publica edição financeira com versão antiga ou ausente', () => {
+    const input = incomePlan();
+    const saved = run<PlanItem>(base(), 'savePlan', { input, completion: { month: '2026-11', completed: true, paidOn: '2026-11-05' } });
+    const before = structuredClone(saved.state);
+    for (const expectedEntryVersion of [undefined, saved.state.entries[0].version - 1]) {
+      expect(() => run(saved.state, 'savePlan', { input: { ...input, amountCents: 20000 }, id: saved.result.id, expectedVersion: saved.result.version, completion: { month: '2026-11', completed: true, paidOn: '2026-11-05', amountCents: 20000, accountId: 'account', ...(expectedEntryVersion === undefined ? {} : { expectedEntryVersion }) } })).toThrow('alterado');
+      expect(saved.state).toEqual(before);
+    }
   });
 });

@@ -27,6 +27,7 @@ type PlanType = PlanItem['type'];
 type PlanEditor = { plan?: PlanItem; type: PlanType };
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'Não foi possível concluir. Tente novamente.';
 const inputMoney = (cents: number) => (cents / 100).toFixed(2).replace('.', ',');
+const parsedMoney = (value: string) => { try { return parseMoney(value); } catch { return undefined; } };
 const monthLabel = (month: string) => new Date(`${month}-15T12:00:00`).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 const dateLabel = (date: string) => new Date(`${date}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
 const fullDateLabel = (date: string) => new Date(`${date}T12:00:00`).toLocaleDateString('pt-BR');
@@ -92,10 +93,14 @@ function PlanForm({ editor, month, accounts, categories, entries, occurrences, o
       completed: existing && isCashPlan(existing.type) ? entry?.status === 'paid' : row?.occurrence?.status === 'done',
       paidOn: entry?.paidOn ?? localDate(),
       entryVersion: entry?.version,
+      amountCents: entry?.amountCents,
+      accountId: entry?.accountId,
     };
   });
   const [completed, setCompleted] = useState(Boolean(initialCompletion.completed));
   const [paidOn, setPaidOn] = useState(initialCompletion.paidOn);
+  const [confirmedAmount, setConfirmedAmount] = useState(() => initialCompletion.completed && initialCompletion.amountCents !== undefined ? inputMoney(initialCompletion.amountCents) : amount);
+  const [confirmedAccountId, setConfirmedAccountId] = useState(() => initialCompletion.completed ? initialCompletion.accountId ?? existing?.accountId ?? accounts[0]?.id ?? '' : existing?.accountId ?? accounts[0]?.id ?? '');
   const [confirmedDate, setConfirmedDate] = useState(false);
   const [endMonth, setEndMonth] = useState(existing?.endMonth ?? '');
   const [accountId, setAccountId] = useState(existing?.accountId ?? accounts[0]?.id ?? '');
@@ -110,7 +115,9 @@ function PlanForm({ editor, month, accounts, categories, entries, occurrences, o
   const [error, setError] = useState('');
   const cash = isCashPlan(type);
   const completionMonth = existing ? month : startMonth;
-  const completionChanged = completed !== Boolean(initialCompletion.completed) || (cash && completed && paidOn !== initialCompletion.paidOn);
+  const completionChanged = completed !== Boolean(initialCompletion.completed) || (cash && completed && (
+    paidOn !== initialCompletion.paidOn || parsedMoney(confirmedAmount) !== initialCompletion.amountCents || confirmedAccountId !== initialCompletion.accountId
+  ));
   const validCompletionMonth = isValidMonth(completionMonth);
   const outsideMonth = cash && completed && validCompletionMonth && paidOn.slice(0, 7) !== completionMonth;
   const completionLabel = type === 'salary' ? 'Já recebido' : cash ? 'Já pago' : type === 'reserve' ? 'Valor já separado' : 'Já conferido na fatura';
@@ -125,6 +132,12 @@ function PlanForm({ editor, month, accounts, categories, entries, occurrences, o
     setType(value);
     setCategoryId(defaultCategory(value));
     setCompleted(false); setPaidOn(localDate()); setConfirmedDate(false);
+  }
+  function changeCompleted(checked: boolean) {
+    setCompleted(checked); setConfirmedDate(false);
+    if (checked && cash && !initialCompletion.completed) {
+      setConfirmedAmount(amount); setConfirmedAccountId(accountId);
+    }
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -143,7 +156,7 @@ function PlanForm({ editor, month, accounts, categories, entries, occurrences, o
       if (completionChanged && outsideMonth && !confirmedDate) throw new Error('Confirme a data fora do mês de referência antes de continuar.');
       const completion: PlanCompletionInput | undefined = completionChanged ? {
         month: completionMonth, completed,
-        ...(cash && completed ? { paidOn } : {}),
+        ...(cash && completed ? { paidOn, amountCents: parseMoney(confirmedAmount), accountId: confirmedAccountId } : {}),
         ...(cash && initialCompletion.entryVersion !== undefined ? { expectedEntryVersion: initialCompletion.entryVersion } : {}),
       } : undefined;
       const saved = await savePlan(input, existing?.id, existing?.version, completion, completionMonth);
@@ -172,13 +185,18 @@ function PlanForm({ editor, month, accounts, categories, entries, occurrences, o
     {type !== 'installment' && <label>Último mês da previsão <span className="planning-optional">opcional</span><input type="month" min={startMonth || '1900-01'} max="9999-12" value={endMonth} onChange={(event) => setEndMonth(event.target.value)} /></label>}
     <fieldset className="planning-completion-fields">
       <legend>Confirmação de {validCompletionMonth ? monthLabel(completionMonth) : 'referência'}</legend>
-      <label className="checkbox-row"><input type="checkbox" checked={completed} onChange={(event) => { setCompleted(event.target.checked); setConfirmedDate(false); }} /><span>{completionLabel}</span></label>
-      {cash && completed && <label>Data do {type === 'salary' ? 'recebimento' : 'pagamento'}<input required type="date" min="1900-01-01" max={localDate()} value={paidOn} onChange={(event) => { setPaidOn(event.target.value); setConfirmedDate(false); }} /></label>}
+      <label className="checkbox-row"><input type="checkbox" checked={completed} onChange={(event) => changeCompleted(event.target.checked)} /><span>{completionLabel}</span></label>
+      {cash && completed && <>
+        <label>Valor {type === 'salary' ? 'recebido' : 'pago'} em reais<div className="planning-money-field"><span>R$</span><input required inputMode="decimal" value={confirmedAmount} onChange={(event) => setConfirmedAmount(event.target.value)} aria-label={`Valor ${type === 'salary' ? 'recebido' : 'pago'} em reais`} /></div></label>
+        <button type="button" className="planning-use-forecast" onClick={() => setConfirmedAmount(amount)}>Usar valor previsto</button>
+        <label>Conta do {type === 'salary' ? 'recebimento' : 'pagamento'}<select required value={confirmedAccountId} onChange={(event) => setConfirmedAccountId(event.target.value)}><option value="" disabled>Selecione uma conta</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
+        <label>Data do {type === 'salary' ? 'recebimento' : 'pagamento'}<input required type="date" min="1900-01-01" max={localDate()} value={paidOn} onChange={(event) => { setPaidOn(event.target.value); setConfirmedDate(false); }} /></label>
+      </>}
       {completionChanged && outsideMonth && <label className="planning-date-confirm"><input required type="checkbox" checked={confirmedDate} onChange={(event) => setConfirmedDate(event.target.checked)} /><span>Confirmo que a data do {type === 'salary' ? 'recebimento' : 'pagamento'} está fora de {monthLabel(completionMonth)}. O orçamento continua nesse mês e o saldo considera a data informada.</span></label>}
-      <p className="planning-field-help">{cash ? 'Ao confirmar, o recebimento ou pagamento é registrado uma única vez na conta. Desmarcar reabre o lançamento do mês.' : type === 'reserve' ? 'Separar a reserva é um controle do planejamento e não movimenta a conta.' : 'Conferir o item na fatura não registra um pagamento nem cria outra despesa na conta.'}</p>
+      <p className="planning-field-help">{cash ? 'O saldo usa o valor e a conta informados nesta confirmação. Um lançamento já existente será atualizado, sem duplicação. Desmarcar reabre o lançamento do mês e retira seu efeito do saldo.' : type === 'reserve' ? 'Separar a reserva é um controle do planejamento e não movimenta a conta.' : 'Conferir o item na fatura não registra um pagamento nem cria outra despesa na conta.'}</p>
     </fieldset>
     <div className="planning-form-context"><Info size={16} /><p>{type === 'salary' ? 'Salário e adiantamento devem ser dois itens, cada um com sua data.' : isCardPlan(type) ? 'Este valor compromete o orçamento mensal. O pagamento da fatura é registrado em Lançamentos.' : type === 'reserve' ? 'A reserva reduz o valor livre do orçamento mensal.' : 'A previsão entra no orçamento do mês. A confirmação do pagamento atualiza o saldo da conta.'}</p></div>
-    {existing && <p className="planning-edit-note">A edição atualiza as previsões de {monthLabel(month)} em diante. Os lançamentos já registrados mantêm seus valores. A confirmação acima altera somente a situação e a data do mês indicado.</p>}
+    {existing && <p className="planning-edit-note">A edição atualiza as previsões de {monthLabel(month)} em diante. Para corrigir o valor, a conta ou a data do pagamento ou recebimento deste mês, altere os campos da confirmação acima.</p>}
     <p className="planning-field-help">Vencimentos em dias que não existem no mês usam o último dia disponível.</p>
     {error && <p className="form-error" role="alert">{error}</p>}
     <p className="form-note"><HardDrive size={14} />Alterações salvas pelo Apps Script no Google Sheets.</p>
@@ -188,6 +206,7 @@ function PlanForm({ editor, month, accounts, categories, entries, occurrences, o
 
 function SettlementForm({ row, accounts, candidates, onClose, onSaved }: { row: PlanningRow; accounts: Account[]; candidates: Entry[]; onClose: () => void; onSaved: (result: 'linked' | 'settled') => void }) {
   const [paidOn, setPaidOn] = useState(localDate());
+  const [amount, setAmount] = useState(inputMoney(row.amountCents));
   const [accountId, setAccountId] = useState(row.plan.accountId ?? accounts[0]?.id ?? '');
   const [mode, setMode] = useState<'existing' | 'new'>(!row.linkedEntry && candidates.length ? 'existing' : 'new');
   const [entryId, setEntryId] = useState(candidates[0]?.id ?? '');
@@ -207,16 +226,16 @@ function SettlementForm({ row, accounts, candidates, onClose, onSaved }: { row: 
         onSaved('linked');
       } else {
         if (outsideMonth && !confirmedDate) throw new Error('Confirme a data fora do mês de referência antes de continuar.');
-        await settlePlan(row.plan.id, row.month, { paidOn, accountId });
+        await settlePlan(row.plan.id, row.month, { paidOn, accountId, amountCents: parseMoney(amount), ...(row.linkedEntry ? { expectedEntryVersion: row.linkedEntry.version } : {}) });
         onSaved('settled');
       }
     }
     catch (e) { setError(errorText(e)); setSaving(false); }
   }
   return <form className="form planning-form" onSubmit={submit}>
-    <div className="planning-settlement-summary"><span>{row.plan.description}</span><strong>{formatMoney(row.linkedEntry?.amountCents ?? row.amountCents)}</strong><small>{row.linkedEntry ? 'Lançamento vinculado' : 'Valor previsto'} · Referência: {monthLabel(row.month)}</small></div>
+    <div className="planning-settlement-summary"><span>{row.plan.description}</span><strong>{formatMoney(row.amountCents)}</strong><small>Valor previsto · Referência: {monthLabel(row.month)}</small></div>
     {!row.linkedEntry && candidates.length > 0 && <><div className="planning-link-choice" aria-label="Origem do registro"><button type="button" aria-pressed={mode === 'existing'} className={mode === 'existing' ? 'selected' : ''} onClick={() => { setMode('existing'); setError(''); }}>Vincular lançamento existente</button><button type="button" aria-pressed={mode === 'new'} className={mode === 'new' ? 'selected' : ''} onClick={() => { setMode('new'); setError(''); }}>Criar lançamento</button></div><p className="planning-field-help">Encontramos {candidates.length === 1 ? 'um lançamento compatível' : 'lançamentos compatíveis'} neste mês. Se este item já foi registrado, vincule-o para manter um único registro.</p></>}
-    {mode === 'existing' ? <><label>Lançamento a vincular<select autoFocus required value={entryId} onChange={(event) => setEntryId(event.target.value)}>{candidates.map((entry) => <option key={entry.id} value={entry.id}>{entry.description} · {formatMoney(entry.amountCents)} · {dateLabel(entry.occurredOn)} · {entry.status === 'paid' ? income ? 'recebido' : 'pago' : 'pendente'}</option>)}</select></label>{selectedEntry && <div className="planning-form-context"><Info size={16} /><p>O lançamento de <strong>{formatMoney(selectedEntry.amountCents)}</strong> será vinculado à previsão de <strong>{formatMoney(row.amountCents)}</strong>. {selectedEntry.status === 'paid' ? 'O registro já está liquidado; nenhum novo movimento será criado.' : 'O registro continuará pendente. Depois de vincular, você poderá confirmar o pagamento ou recebimento.'}</p></div>}</> : <><label>Data do {income ? 'recebimento' : 'pagamento'}<input autoFocus required type="date" max={localDate()} value={paidOn} onChange={(event) => { setPaidOn(event.target.value); setConfirmedDate(false); }} /></label><label>Conta do {income ? 'recebimento' : 'pagamento'}<select required value={accountId} onChange={(event) => setAccountId(event.target.value)}><option value="" disabled>Selecione uma conta</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>{outsideMonth && <label className="planning-date-confirm"><input required type="checkbox" checked={confirmedDate} onChange={(event) => setConfirmedDate(event.target.checked)} /><span>Confirmo que a data do {income ? 'recebimento' : 'pagamento'} está fora de {monthLabel(row.month)}. O orçamento permanece nesse mês e o dinheiro movimenta a conta na data informada.</span></label>}<p className="planning-field-help">{row.linkedEntry ? 'O lançamento já vinculado será liquidado pelo valor registrado, sem criar outro registro.' : 'Será criado um lançamento vinculado a este item do mês.'} Este registro atualiza o saldo da conta.</p></>}
+    {mode === 'existing' ? <><label>Lançamento a vincular<select autoFocus required value={entryId} onChange={(event) => setEntryId(event.target.value)}>{candidates.map((entry) => <option key={entry.id} value={entry.id}>{entry.description} · {formatMoney(entry.amountCents)} · {dateLabel(entry.occurredOn)} · {entry.status === 'paid' ? income ? 'recebido' : 'pago' : 'pendente'}</option>)}</select></label>{selectedEntry && <div className="planning-form-context"><Info size={16} /><p>O lançamento de <strong>{formatMoney(selectedEntry.amountCents)}</strong> será vinculado à previsão de <strong>{formatMoney(row.amountCents)}</strong>. {selectedEntry.status === 'paid' ? 'O registro já está liquidado; nenhum novo movimento será criado.' : 'O registro continuará pendente. Depois de vincular, você poderá confirmar o pagamento ou recebimento.'}</p></div>}</> : <><label>Valor {income ? 'recebido' : 'pago'} em reais<div className="planning-money-field"><span>R$</span><input required inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} aria-label={"Valor " + (income ? 'recebido' : 'pago') + " em reais"} /></div></label><label>Data do {income ? 'recebimento' : 'pagamento'}<input autoFocus required type="date" max={localDate()} value={paidOn} onChange={(event) => { setPaidOn(event.target.value); setConfirmedDate(false); }} /></label><label>Conta do {income ? 'recebimento' : 'pagamento'}<select required value={accountId} onChange={(event) => setAccountId(event.target.value)}><option value="" disabled>Selecione uma conta</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>{outsideMonth && <label className="planning-date-confirm"><input required type="checkbox" checked={confirmedDate} onChange={(event) => setConfirmedDate(event.target.checked)} /><span>Confirmo que a data do {income ? 'recebimento' : 'pagamento'} está fora de {monthLabel(row.month)}. O orçamento permanece nesse mês e o dinheiro movimenta a conta na data informada.</span></label>}<p className="planning-field-help">{row.linkedEntry ? 'O lançamento já vinculado será atualizado com o valor e a conta informados, sem criar outro registro.' : 'Será criado um lançamento vinculado a este item do mês.'} Este registro atualiza o saldo da conta.</p></>}
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="modal-actions"><button type="button" className="button secondary" disabled={saving} onClick={onClose}>Cancelar</button><button type="submit" className="button primary" disabled={saving}><Check size={16} />{saving ? 'Registrando…' : mode === 'existing' ? 'Vincular lançamento' : row.linkedEntry ? income ? 'Confirmar recebimento' : 'Confirmar pagamento' : income ? 'Criar e registrar recebimento' : 'Criar e registrar pagamento'}</button></div>
   </form>;

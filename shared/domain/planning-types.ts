@@ -29,6 +29,10 @@ export interface PlanCompletionInput {
   month: string;
   completed: boolean;
   paidOn?: string;
+  /** Valor efetivamente pago/recebido; omitir preserva o lançamento vinculado. */
+  amountCents?: number;
+  /** Conta efetiva do pagamento/recebimento, independente da conta padrão da previsão. */
+  accountId?: string;
   expectedEntryVersion?: number;
 }
 

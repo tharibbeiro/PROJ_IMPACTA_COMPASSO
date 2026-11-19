@@ -273,7 +273,7 @@ export class FinanceService {
     }
 
     if (!bankPlan(plan)) {
-      if (completion.paidOn !== undefined || completion.expectedEntryVersion !== undefined) {
+      if (completion.paidOn !== undefined || completion.amountCents !== undefined || completion.accountId !== undefined || completion.expectedEntryVersion !== undefined) {
         throw new AppError('Itens de cartão e reservas são conferidos sem registrar pagamento bancário.', 400);
       }
       this.setPlanningChecked(state, plan.id, selectedMonth, completion.completed);
@@ -284,19 +284,26 @@ export class FinanceService {
     if (completion.completed && (!isValidDate(paidOn) || paidOn > this.today())) {
       throw new AppError('Informe uma data de pagamento ou recebimento válida, até hoje.', 400);
     }
-    if (!completion.completed && paidOn !== undefined) throw new AppError('Um item pendente não deve informar data de pagamento.', 400);
+    if (!completion.completed && (paidOn !== undefined || completion.amountCents !== undefined || completion.accountId !== undefined)) {
+      throw new AppError('Um item pendente não deve informar data, valor ou conta de pagamento.', 400);
+    }
+    const amountCents = completion.amountCents === undefined ? undefined : cents(completion.amountCents);
+    const accountId = completion.accountId === undefined ? undefined : text(completion.accountId, 'Conta do pagamento ou recebimento', 100);
+    if (accountId !== undefined) this.account(state, accountId);
     const entry = this.findPlanEntry(state, plan.id, selectedMonth);
     if (!entry) {
       if (completion.expectedEntryVersion !== undefined) throw new AppError('O lançamento vinculado foi alterado. Atualize os dados antes de continuar.', 409);
-      if (completion.completed) this.settlePlan(state, plan.id, selectedMonth, { paidOn });
+      if (completion.completed) this.settlePlan(state, plan.id, selectedMonth, { paidOn, ...(amountCents === undefined ? {} : { amountCents }), ...(accountId === undefined ? {} : { accountId }) });
       return;
     }
 
     requireVersion(entry.version, completion.expectedEntryVersion);
     const status = completion.completed ? 'paid' : 'pending';
-    if (entry.status === status && (!completion.completed || entry.paidOn === paidOn)) return;
-    // Alterar a previsão não reescreve o valor nem a descrição já registrados.
-    this.saveEntry(state, { ...entry, status, ...(completion.completed ? { paidOn } : {}) }, entry.id, entry.version);
+    const confirmedAmount = amountCents ?? entry.amountCents;
+    const confirmedAccount = accountId ?? entry.accountId;
+    if (entry.status === status && (!completion.completed || (entry.paidOn === paidOn && entry.amountCents === confirmedAmount && entry.accountId === confirmedAccount))) return;
+    // Somente os campos efetivamente confirmados atualizam o realizado do mês.
+    this.saveEntry(state, { ...entry, status, ...(completion.completed ? { paidOn, amountCents: confirmedAmount, accountId: confirmedAccount } : {}) }, entry.id, entry.version);
   }
 
   private deletePlan(state: AcademicState, id: string, expectedVersion: unknown, fromMonth: string): PlanItem {
@@ -326,11 +333,22 @@ export class FinanceService {
   }
 
   private settlePlan(state: AcademicState, planId: string, selectedMonth: string, options: Record<string, unknown>): Entry {
-    const paidOn = options.paidOn ?? this.today();
+    const plan = this.plan(state, planId);
+    if (!bankPlan(plan)) throw new AppError('Itens de cartão e reservas são conferidos no planejamento e não criam despesas bancárias.', 400);
+    const amountCents = options.amountCents === undefined ? undefined : cents(options.amountCents);
+    const accountId = options.accountId === undefined ? undefined : text(options.accountId, 'Conta do pagamento ou recebimento', 100);
+    if (accountId !== undefined) this.account(state, accountId);
+    const existing = this.findPlanEntry(state, planId, selectedMonth);
+    const explicitConfirmation = amountCents !== undefined || accountId !== undefined || options.expectedEntryVersion !== undefined;
+    if (existing && explicitConfirmation) requireVersion(existing.version, options.expectedEntryVersion);
+    if (!existing && options.expectedEntryVersion !== undefined) throw new AppError('O lançamento vinculado foi alterado. Atualize os dados antes de continuar.', 409);
+    const paidOn = options.paidOn ?? existing?.paidOn ?? this.today();
     if (!isValidDate(paidOn) || paidOn > this.today()) throw new AppError('Informe uma data de pagamento ou recebimento válida, até hoje.', 400);
-    const entry = this.realizePlan(state, planId, selectedMonth);
-    if (entry.status === 'paid') return entry;
-    return this.saveEntry(state, { ...entry, status: 'paid', paidOn, accountId: options.accountId ?? entry.accountId }, entry.id, entry.version);
+    const entry = existing ?? this.realizePlan(state, planId, selectedMonth);
+    const confirmedAmount = amountCents ?? entry.amountCents;
+    const confirmedAccount = accountId ?? entry.accountId;
+    if (entry.status === 'paid' && (!explicitConfirmation || (entry.paidOn === paidOn && entry.amountCents === confirmedAmount && entry.accountId === confirmedAccount))) return entry;
+    return this.saveEntry(state, { ...entry, status: 'paid', paidOn, amountCents: confirmedAmount, accountId: confirmedAccount }, entry.id, entry.version);
   }
 
   private setPlanningChecked(state: AcademicState, planId: string, selectedMonth: string, checked: unknown): PlanOccurrence {
