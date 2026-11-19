@@ -21,8 +21,6 @@ Facilitar o acompanhamento do dinheiro recebido e gasto, das contas a pagar e do
 - Vinculação entre compromissos e lançamentos para evitar duplicações.
 - Exportação em CSV e cópia de segurança em JSON, com restauração.
 
-A demonstração usa dados fictícios e uma sessão separada para cada visitante. Para abrir a aplicação e salvar alterações, é necessário ter conexão com o Google. Os dados já carregados podem ser consultados na tela, mesmo se a conexão for interrompida.
-
 ## Tecnologias e três camadas
 
 ```text
