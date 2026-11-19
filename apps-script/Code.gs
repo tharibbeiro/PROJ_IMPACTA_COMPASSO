@@ -223,9 +223,14 @@ var CompassoBackend_ = (() => {
     const linked = linkedEntriesForMonth(plans, occurrences, entries, month2);
     for (const [id, items] of linked) {
       const plan = plans.find((item) => item.id === id);
-      const existing = (_a = rows.get(id)) != null ? _a : rowForPlan(plan, month2);
       const entry = items[0];
-      rows.set(id, { ...existing, amountCents: safeSum(items.map((item) => item.amountCents)), dueOn: entry.dueOn, linkedEntry: entry });
+      const existing = (_a = rows.get(id)) != null ? _a : {
+        ...rowForPlan(plan, month2),
+        plan: { ...plan, description: entry.description },
+        amountCents: safeSum(items.map((item) => item.amountCents)),
+        dueOn: entry.dueOn
+      };
+      rows.set(id, { ...existing, linkedEntry: entry });
     }
     return [...rows.values()].map((row) => ({ ...row, occurrence: occurrences.find((item) => item.planId === row.plan.id && item.month === month2) })).sort((a, b) => a.dueOn.localeCompare(b.dueOn) || a.plan.description.localeCompare(b.plan.description, "pt-BR"));
   }
@@ -468,7 +473,7 @@ var CompassoBackend_ = (() => {
       this.clock = clock;
     }
     apply(original, command2) {
-      var _a;
+      var _a, _b;
       const state = cloneValue_(original);
       try {
         const payload = object2(command2.payload, "Parâmetros");
@@ -501,13 +506,13 @@ var CompassoBackend_ = (() => {
             return { state: restored, result: void 0 };
           }
           case "savePlan": {
-            const plan = this.savePlan(state, payload.input, optionalId(payload.id), payload.expectedVersion);
+            const plan = this.savePlan(state, payload.input, optionalId(payload.id), payload.expectedVersion, month((_a = payload.referenceMonth) != null ? _a : this.today().slice(0, 7)));
             if (payload.completion !== void 0) this.applyPlanCompletion(state, plan, payload.completion);
             result = plan;
             break;
           }
           case "deletePlan":
-            result = this.deletePlan(state, text3(payload.id, "Planejamento", 100), payload.expectedVersion, month((_a = payload.fromMonth) != null ? _a : this.today().slice(0, 7)));
+            result = this.deletePlan(state, text3(payload.id, "Planejamento", 100), payload.expectedVersion, month((_b = payload.fromMonth) != null ? _b : this.today().slice(0, 7)));
             break;
           case "realizePlan":
             result = this.realizePlan(state, text3(payload.planId, "Planejamento", 100), month(payload.month));
@@ -632,13 +637,14 @@ var CompassoBackend_ = (() => {
       if (!entry.planId || !entry.planMonth) return;
       const plan = this.plan(state, entry.planId);
       const previous = state.occurrences.find((item) => item.planId === entry.planId && item.month === entry.planMonth);
+      const forecast = occurrencesForMonth([plan], entry.planMonth)[0];
       const occurrence = {
         id: `${entry.planId}:${entry.planMonth}`,
         planId: entry.planId,
         month: entry.planMonth,
         status: !removeLink && entry.status === "paid" ? "done" : "pending",
         updatedAt: this.now(),
-        snapshot: (_a = previous == null ? void 0 : previous.snapshot) != null ? _a : { type: plan.type, description: entry.description, amountCents: entry.amountCents, dueOn: entry.dueOn },
+        snapshot: (_a = previous == null ? void 0 : previous.snapshot) != null ? _a : forecast ? snapshotForRow(forecast) : { type: plan.type, description: entry.description, amountCents: entry.amountCents, dueOn: entry.dueOn },
         ...!removeLink ? { linkedEntryId: entry.id } : {}
       };
       if (previous) state.occurrences[state.occurrences.indexOf(previous)] = occurrence;
@@ -689,7 +695,7 @@ var CompassoBackend_ = (() => {
       if (typeof input.displayName !== "string" || input.displayName.trim().length > 60) throw new AppError("O nome deve ter até 60 caracteres.", 400);
       state.settings = { ...state.settings, displayName: input.displayName.trim(), exampleMode: false };
     }
-    savePlan(state, raw, id, expectedVersion) {
+    savePlan(state, raw, id, expectedVersion, referenceMonth) {
       var _a, _b, _c;
       const clean = validatePlanInput(object2(raw, "Planejamento"));
       if (clean.accountId) this.account(state, clean.accountId);
@@ -701,6 +707,13 @@ var CompassoBackend_ = (() => {
       const plan = { ...clean, id: (_b = existing == null ? void 0 : existing.id) != null ? _b : generateId_(), version: nextVersion(existing == null ? void 0 : existing.version), createdAt: (_c = existing == null ? void 0 : existing.createdAt) != null ? _c : this.now(), updatedAt: this.now() };
       if (existing) state.plans[state.plans.indexOf(existing)] = plan;
       else state.plans.push(plan);
+      if (existing) {
+        state.occurrences = state.occurrences.map((occurrence) => {
+          if (occurrence.planId !== plan.id || occurrence.month < referenceMonth) return occurrence;
+          const forecast = occurrencesForMonth([plan], occurrence.month)[0];
+          return forecast ? { ...occurrence, snapshot: snapshotForRow(forecast), updatedAt: this.now() } : occurrence;
+        });
+      }
       return plan;
     }
     applyPlanCompletion(state, plan, raw) {

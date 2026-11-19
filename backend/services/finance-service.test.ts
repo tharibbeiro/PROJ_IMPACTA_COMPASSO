@@ -67,7 +67,7 @@ describe('FinanceService: regras e isolamento', () => {
     expect(updated.state.entries).toEqual(created.state.entries);
   });
 
-  it('registra e quita plano uma única vez mantendo o valor real no orçamento', () => {
+  it('registra e quita plano uma única vez mantendo a previsão no orçamento', () => {
     const planned = run<PlanItem>(base(), 'savePlan', { input: planInput() });
     const issued = run<Entry>(planned.state, 'realizePlan', { planId: planned.result.id, month: '2026-11' });
     const repeated = run<Entry>(issued.state, 'realizePlan', { planId: planned.result.id, month: '2026-11' });
@@ -98,7 +98,7 @@ describe('FinanceService: regras e isolamento', () => {
     const initial: PlanInput = { type: 'cardFixed', description: 'Assinatura original', amountCents: 4567, startMonth: '2026-11', dueDay: 18, cardName: 'Cartão fictício' };
     const planned = run<PlanItem>(base(), 'savePlan', { input: initial });
     const checked = run<PlanOccurrence>(planned.state, 'setPlanningChecked', { planId: planned.result.id, month: '2026-11', checked: true });
-    const changed = run<PlanItem>(checked.state, 'savePlan', { id: planned.result.id, expectedVersion: 1, input: { ...initial, description: 'Nova descrição', amountCents: 8000, dueDay: 28 } });
+    const changed = run<PlanItem>(checked.state, 'savePlan', { id: planned.result.id, expectedVersion: 1, referenceMonth: '2026-12', input: { ...initial, description: 'Nova descrição', amountCents: 8000, dueDay: 28 } });
     const ended = run(changed.state, 'deletePlan', { id: planned.result.id, expectedVersion: changed.result.version, fromMonth: '2026-11' });
     const rows = rowsForMonth(ended.state.plans, ended.state.occurrences, ended.state.entries, '2026-11');
     expect(rows[0]).toMatchObject({ amountCents: 4567, dueOn: '2026-11-18', plan: { description: 'Assinatura original' } });
@@ -185,7 +185,14 @@ describe('FinanceService: previsão e situação salvas em uma única operação
     const changed = run<PlanItem>(saved.state, 'savePlan', { id: saved.result.id, expectedVersion: saved.result.version, input: { ...input, description: 'Nova previsão', amountCents: 99999, dueDay: 28 } });
     expect(changed.result).toMatchObject({ description: 'Nova previsão', amountCents: 99999, dueDay: 28 });
     expect(changed.state.entries).toEqual(saved.state.entries);
-    expect(changed.state.occurrences).toEqual(saved.state.occurrences);
+    expect(changed.state.occurrences[0]).toMatchObject({
+      status: 'done', linkedEntryId: saved.state.entries[0].id,
+      snapshot: { description: 'Nova previsão', amountCents: 99999, dueOn: '2026-11-28' },
+    });
+    expect(rowsForMonth(changed.state.plans, changed.state.occurrences, changed.state.entries, '2026-11')[0]).toMatchObject({
+      amountCents: 99999, dueOn: '2026-11-28', plan: { description: 'Nova previsão' }, linkedEntry: saved.state.entries[0],
+    });
+    expect(monthlyPlanningSummary(changed.state.plans, changed.state.occurrences, changed.state.entries, '2026-11').fixedCents).toBe(99999);
   });
 
   it('altera explicitamente a data do pagamento sem reescrever o valor real pelo novo valor previsto', () => {
@@ -271,5 +278,126 @@ describe('FinanceService: previsão e situação salvas em uma única operação
     expect(() => run(deleted.state, 'savePlan', { input, id: saved.result.id, expectedVersion: saved.result.version, completion: { month: '2026-11', completed: true, paidOn: '2026-11-12', expectedEntryVersion: entry.version } })).toThrow(AppError);
     expect(deleted.state).toEqual(original);
     expect(deleted.state.entries).toHaveLength(0);
+  });
+});
+
+describe('FinanceService: edição da previsão por competência', () => {
+  it.each(['pending', 'paid'] as const)('atualiza lista e totais sem reescrever um lançamento %s', (status) => {
+    const input: PlanInput = { ...planInput(), type: 'salary', categoryId: 'income', description: 'Salário fictício', amountCents: 510000, dueDay: 5 };
+    const saved = run<PlanItem>(base(), 'savePlan', { input });
+    const realized = run<Entry>(saved.state, 'realizePlan', { planId: saved.result.id, month: '2026-11' });
+    const recorded = status === 'paid'
+      ? run<Entry>(realized.state, 'settlePlan', { planId: saved.result.id, month: '2026-11', options: { paidOn: '2026-11-05' } })
+      : realized;
+    const beforeBalance = accountBalance(recorded.state.accounts[0], recorded.state.entries);
+    const changed = run<PlanItem>(recorded.state, 'savePlan', {
+      id: saved.result.id, expectedVersion: saved.result.version, referenceMonth: '2026-11',
+      input: { ...input, description: 'Receita extra de teste', amountCents: 20000, dueDay: 30 },
+    });
+    expect(changed.state.entries).toEqual(recorded.state.entries);
+    expect(accountBalance(changed.state.accounts[0], changed.state.entries)).toBe(beforeBalance);
+    expect(rowsForMonth(changed.state.plans, changed.state.occurrences, changed.state.entries, '2026-11')[0]).toMatchObject({
+      plan: { description: 'Receita extra de teste' }, amountCents: 20000, dueOn: '2026-11-30',
+      linkedEntry: { id: recorded.result.id, description: 'Salário fictício', amountCents: 510000, dueOn: '2026-11-05', status },
+    });
+    expect(monthlyPlanningSummary(changed.state.plans, changed.state.occurrences, changed.state.entries, '2026-11').expectedIncomeCents).toBe(20000);
+  });
+
+  it('atualiza snapshots do mês consultado em diante e mantém competências anteriores', () => {
+    const input = { ...planInput(), startMonth: '2026-10' };
+    const saved = run<PlanItem>(base(), 'savePlan', { input });
+    let state = saved.state;
+    for (const selectedMonth of ['2026-10', '2026-11', '2026-12']) {
+      state = run<Entry>(state, 'realizePlan', { planId: saved.result.id, month: selectedMonth }).state;
+    }
+    const previous = structuredClone(state);
+    const changed = run<PlanItem>(state, 'savePlan', {
+      id: saved.result.id, expectedVersion: saved.result.version, referenceMonth: '2026-11',
+      input: { ...input, description: 'Previsão revista', amountCents: 22000, dueDay: 30 },
+    });
+    expect(changed.state.entries).toEqual(previous.entries);
+    expect(changed.state.occurrences.find((item) => item.month === '2026-10')).toEqual(previous.occurrences.find((item) => item.month === '2026-10'));
+    expect(rowsForMonth(changed.state.plans, changed.state.occurrences, changed.state.entries, '2026-10')[0]).toMatchObject({
+      plan: { description: 'Conta prevista' }, amountCents: 12345, dueOn: '2026-10-20',
+    });
+    for (const selectedMonth of ['2026-11', '2026-12', '2027-01']) {
+      expect(rowsForMonth(changed.state.plans, changed.state.occurrences, changed.state.entries, selectedMonth)[0]).toMatchObject({
+        plan: { description: 'Previsão revista' }, amountCents: 22000, dueOn: `${selectedMonth}-30`,
+      });
+    }
+  });
+
+  it('o mês de referência omitido usa o mês do servidor', () => {
+    const input = { ...planInput(), startMonth: '2026-10' };
+    const saved = run<PlanItem>(base(), 'savePlan', { input });
+    const october = run<Entry>(saved.state, 'realizePlan', { planId: saved.result.id, month: '2026-10' });
+    const november = run<Entry>(october.state, 'realizePlan', { planId: saved.result.id, month: '2026-11' });
+    const changed = run<PlanItem>(november.state, 'savePlan', { id: saved.result.id, expectedVersion: saved.result.version, input: { ...input, amountCents: 20000 } });
+    expect(changed.state.occurrences.find((item) => item.month === '2026-10')?.snapshot?.amountCents).toBe(12345);
+    expect(changed.state.occurrences.find((item) => item.month === '2026-11')?.snapshot?.amountCents).toBe(20000);
+  });
+
+  it.each(['cardFixed', 'reserve', 'installment'] as const)('editar %s conferido atualiza a previsão sem alterar caixa ou competências passadas', (type) => {
+    const input: PlanInput = {
+      type, description: 'Compromisso original', amountCents: 10000, startMonth: '2026-10', dueDay: 20,
+      ...(type !== 'reserve' ? { cardName: 'Cartão original' } : {}),
+      ...(type === 'installment' ? { installmentNumber: 3, totalInstallments: 6 } : {}),
+    };
+    const saved = run<PlanItem>(base(), 'savePlan', { input });
+    const october = run<PlanOccurrence>(saved.state, 'setPlanningChecked', { planId: saved.result.id, month: '2026-10', checked: true });
+    const november = run<PlanOccurrence>(october.state, 'setPlanningChecked', { planId: saved.result.id, month: '2026-11', checked: true });
+    const changed = run<PlanItem>(november.state, 'savePlan', {
+      id: saved.result.id, expectedVersion: saved.result.version, referenceMonth: '2026-11',
+      input: { ...input, description: 'Compromisso revisto', amountCents: 20000, dueDay: 31,
+        ...(type !== 'reserve' ? { cardName: 'Cartão atualizado' } : {}),
+        ...(type === 'installment' ? { totalInstallments: 8 } : {}),
+      },
+    });
+    expect(changed.state.entries).toHaveLength(0);
+    expect(accountBalance(changed.state.accounts[0], changed.state.entries)).toBe(100000);
+    expect(changed.state.occurrences.find((item) => item.month === '2026-10')).toEqual(october.result);
+    const row = rowsForMonth(changed.state.plans, changed.state.occurrences, [], '2026-11')[0];
+    expect(row).toMatchObject({ plan: { description: 'Compromisso revisto' }, amountCents: 20000, dueOn: '2026-11-30', occurrence: { status: 'done' } });
+    if (type !== 'reserve') expect(row.plan.cardName).toBe('Cartão atualizado');
+    if (type === 'installment') expect(row).toMatchObject({ installmentNumber: 4, remainingAfterThisMonth: 4, futureBalanceCents: 80000, lastDueOn: '2027-03-31' });
+    const summary = monthlyPlanningSummary(changed.state.plans, changed.state.occurrences, [], '2026-11');
+    expect(summary.committedCents).toBe(20000);
+  });
+
+  it('mudar o início mantém a referência já registrada fora da atividade da nova regra', () => {
+    const input = planInput();
+    const saved = run<PlanItem>(base(), 'savePlan', { input, completion: { month: '2026-11', completed: true, paidOn: '2026-11-10' } });
+    const changed = run<PlanItem>(saved.state, 'savePlan', {
+      id: saved.result.id, expectedVersion: saved.result.version, referenceMonth: '2026-11',
+      input: { ...input, startMonth: '2026-12', amountCents: 20000 },
+    });
+    expect(changed.state.occurrences).toEqual(saved.state.occurrences);
+    expect(changed.state.entries).toEqual(saved.state.entries);
+    expect(rowsForMonth(changed.state.plans, changed.state.occurrences, changed.state.entries, '2026-11')[0].amountCents).toBe(12345);
+    expect(rowsForMonth(changed.state.plans, changed.state.occurrences, changed.state.entries, '2026-12')[0].amountCents).toBe(20000);
+  });
+
+  it('vincular e editar um lançamento mantém a previsão e expõe os dados reais atuais', () => {
+    const saved = run<PlanItem>(base(), 'savePlan', { input: planInput() });
+    const manual = run<Entry>(saved.state, 'saveEntry', { input: { ...entryInput(), description: 'Conta real', amountCents: 15000, dueOn: '2026-11-25' } });
+    const linked = run<Entry>(manual.state, 'linkPlanEntry', { planId: saved.result.id, month: '2026-11', entryId: manual.result.id });
+    expect(linked.state.occurrences[0].snapshot).toMatchObject({ description: 'Conta prevista', amountCents: 12345, dueOn: '2026-11-20' });
+    const edited = run<Entry>(linked.state, 'saveEntry', {
+      id: linked.result.id, expectedVersion: linked.result.version,
+      input: { ...linked.result, description: 'Nome real corrigido', amountCents: 18000, dueOn: '2026-11-26', status: 'paid', paidOn: '2026-11-14' },
+    });
+    expect(rowsForMonth(edited.state.plans, edited.state.occurrences, edited.state.entries, '2026-11')[0]).toMatchObject({
+      plan: { description: 'Conta prevista' }, amountCents: 12345, dueOn: '2026-11-20',
+      linkedEntry: { description: 'Nome real corrigido', amountCents: 18000, dueOn: '2026-11-26', status: 'paid', paidOn: '2026-11-14' },
+    });
+    expect(monthlyPlanningSummary(edited.state.plans, edited.state.occurrences, edited.state.entries, '2026-11')).toMatchObject({ fixedCents: 12345, variableCents: 0 });
+    expect(accountBalance(edited.state.accounts[0], edited.state.entries)).toBe(82000);
+  });
+
+  it('uma competência inválida rejeita toda a alteração sem mudar o estado original', () => {
+    const saved = run<PlanItem>(base(), 'savePlan', { input: planInput() });
+    const before = structuredClone(saved.state);
+    expect(() => run(saved.state, 'savePlan', { id: saved.result.id, expectedVersion: saved.result.version, referenceMonth: '2026-13', input: { ...planInput(), amountCents: 20000 } })).toThrow('mês válido');
+    expect(saved.state).toEqual(before);
   });
 });

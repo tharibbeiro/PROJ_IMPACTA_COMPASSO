@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAppsScriptController } from '../../../backend/apps-script';
 import { runtimeFixture } from '../../../backend/repositories/google-sheets.fake';
+import { accountBalance } from '../../../shared/domain/finance';
+import { monthlyPlanningSummary, rowsForMonth } from '../../../shared/domain/planning';
 
 type Method = 'compassoBootstrap' | 'compassoCreateDemoSession' | 'compassoCommand';
 interface Call { method: Method; args: unknown[] }
@@ -68,5 +70,52 @@ describe('primeiro acesso com transporte realista do Apps Script', () => {
     expect(calls[1]).toEqual({ method: 'compassoCreateDemoSession', args: [] });
     expect(JSON.parse(values.get('compasso-google-session-v1')!).token).not.toBe(previous.token);
     expect((await repository.snapshot()).accounts).toHaveLength(2);
+  });
+
+  it('atualiza previsão, lista e totais após salvar e recarregar, preservando o recebimento vinculado', async () => {
+    const { calls } = applicationBridge();
+    const repository = await import('./repository');
+    const planning = await import('./planning-repository');
+    await repository.initialize();
+    const previous = await repository.snapshot();
+    const initialPlanning = await planning.getPlanningSnapshot();
+    const salary = initialPlanning.plans.find((plan) => plan.description === 'Salário fictício')!;
+    const received = previous.entries.find((entry) => entry.planId === salary.id)!;
+    const month = salary.startMonth;
+    const account = previous.accounts.find((item) => item.id === received.accountId)!;
+    const balance = accountBalance(account, previous.entries);
+    const notifications = vi.fn();
+    const unsubscribe = repository.subscribeState(notifications);
+    calls.length = 0;
+
+    try {
+      const input = {
+        type: salary.type, description: 'Receita extra de teste', amountCents: 20000,
+        startMonth: month, dueDay: 30, accountId: salary.accountId, categoryId: salary.categoryId,
+      };
+      await planning.savePlan(input, salary.id, salary.version, undefined, month);
+      expect(notifications).toHaveBeenCalledTimes(1);
+      expect(calls).toHaveLength(1);
+      const command = JSON.parse(calls[0].args[1] as string);
+      expect(command).toMatchObject({ type: 'savePlan', payload: { referenceMonth: month } });
+
+      for (const reload of [false, true]) {
+        if (reload) await repository.refreshFromServer();
+        const financial = await repository.snapshot();
+        const planned = await planning.getPlanningSnapshot();
+        const row = rowsForMonth(planned.plans, planned.occurrences, financial.entries, month).find((item) => item.plan.id === salary.id)!;
+        expect(row).toMatchObject({ amountCents: 20000, dueOn: `${month}-30`, plan: { description: input.description }, linkedEntry: received });
+        expect(monthlyPlanningSummary(planned.plans, planned.occurrences, financial.entries, month).expectedIncomeCents).toBe(147500);
+        expect(financial.entries.find((entry) => entry.id === received.id)).toEqual(received);
+        expect(accountBalance(account, financial.entries)).toBe(balance);
+      }
+
+      await repository.saveEntry({ ...received, description: 'Recebimento corrigido', amountCents: 490000, paidOn: `${month}-06` }, received.id, received.version);
+      const financial = await repository.snapshot();
+      const planned = await planning.getPlanningSnapshot();
+      const row = rowsForMonth(planned.plans, planned.occurrences, financial.entries, month).find((item) => item.plan.id === salary.id)!;
+      expect(row).toMatchObject({ amountCents: 20000, dueOn: `${month}-30`, plan: { description: input.description }, linkedEntry: { description: 'Recebimento corrigido', amountCents: 490000, paidOn: `${month}-06` } });
+      expect(monthlyPlanningSummary(planned.plans, planned.occurrences, financial.entries, month).expectedIncomeCents).toBe(147500);
+    } finally { unsubscribe(); }
   });
 });

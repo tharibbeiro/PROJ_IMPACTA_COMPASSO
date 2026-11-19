@@ -8,6 +8,22 @@
 @media(max-width:640px){.planning-link-choice>button{font-size:10px;padding:9px 6px}.planning-form .planning-date-confirm{font-size:11px}.planning-unlinked-note{flex-wrap:wrap;font-size:11px;padding:12px}.planning-unlinked-note p{min-width:180px}.planning-unlinked-note button{margin-left:24px}}
 
 /* O planejamento acompanha a largura disponível, inclusive dentro do Apps Script. */
+.planning-entry-detail {
+  display: grid;
+  gap: 3px;
+  margin-top: 8px;
+  color: #65745e;
+  font-size: 11px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.planning-entry-detail strong { font-weight: 500; }
+.planning-item-amount > small {
+  display: block;
+  color: #6b775f;
+  font-size: 10px;
+  font-weight: 400;
+}
 .planning-page,
 .planning-page > *,
 .planning-group,

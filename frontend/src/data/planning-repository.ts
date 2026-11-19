@@ -9,8 +9,8 @@ export async function getPlanningSnapshot(): Promise<PlanningSnapshot> {
   return { plans: plans.sort((a, b) => a.createdAt.localeCompare(b.createdAt)), occurrences };
 }
 
-export function savePlan(input: PlanInput, id?: string, expectedVersion?: number, completion?: PlanCompletionInput): Promise<PlanItem> {
-  return runRemoteCommand('savePlan', { input, ...(id ? { id } : {}), ...(expectedVersion === undefined ? {} : { expectedVersion }), ...(completion ? { completion } : {}) });
+export function savePlan(input: PlanInput, id?: string, expectedVersion?: number, completion?: PlanCompletionInput, referenceMonth?: string): Promise<PlanItem> {
+  return runRemoteCommand('savePlan', { input, ...(id ? { id } : {}), ...(expectedVersion === undefined ? {} : { expectedVersion }), ...(completion ? { completion } : {}), ...(referenceMonth ? { referenceMonth } : {}) });
 }
 
 export function deletePlan(id: string, expectedVersion: number, fromMonth = localDate().slice(0, 7)): Promise<PlanItem> {

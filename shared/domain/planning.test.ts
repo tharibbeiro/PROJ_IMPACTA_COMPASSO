@@ -70,15 +70,15 @@ describe('calendário de planejamento', () => {
 });
 
 describe('conciliação entre previsão e lançamento', () => {
-  it('usa o valor registrado e não duplica gastos fixos como variáveis', () => {
+  it('mantém o valor previsto e não duplica gastos fixos vinculados como variáveis', () => {
     const plans = [plan(), plan({ id: 'reserve', type: 'reserve', amountCents: 4000 })];
     const entries = [entry({ planId: 'plan', planMonth: '2026-11', amountCents: 12500 }), entry({ id: 'variable', amountCents: 3000 })];
     const summary = monthlyPlanningSummary(plans, [], entries, '2026-11');
-    expect(summary.fixedCents).toBe(12500);
+    expect(summary.fixedCents).toBe(10000);
     expect(summary.variableCents).toBe(3000);
     expect(summary.reserveCents).toBe(4000);
-    expect(summary.committedCents).toBe(19500);
-    expect(summary.availableCents).toBe(-19500);
+    expect(summary.committedCents).toBe(17000);
+    expect(summary.availableCents).toBe(-17000);
   });
 
   it('mantém o valor financeiro registrado mesmo após arquivar ou mudar o início do plano', () => {
@@ -95,7 +95,7 @@ describe('conciliação entre previsão e lançamento', () => {
   it('não transforma em variável um lançamento vinculado à competência de outro mês', () => {
     const paid = entry({ planId: 'plan', planMonth: '2026-10', occurredOn: '2026-11-01' });
     expect(monthlyPlanningSummary([plan({ startMonth: '2026-10' })], [], [paid], '2026-11').variableCents).toBe(0);
-    expect(monthlyPlanningSummary([plan({ startMonth: '2026-10' })], [], [paid], '2026-10').fixedCents).toBe(2000);
+    expect(monthlyPlanningSummary([plan({ startMonth: '2026-10' })], [], [paid], '2026-10').fixedCents).toBe(10000);
   });
 
   it('não soma receitas manuais ao salário previsto sem uma vinculação explícita', () => {
@@ -105,7 +105,7 @@ describe('conciliação entre previsão e lançamento', () => {
       entry({ id: 'pending', kind: 'income', amountCents: 8000 }),
       entry({ id: 'salary-real', kind: 'income', planId: 'plan', planMonth: '2026-11', amountCents: 28000, status: 'paid', paidOn: '2026-11-10' }),
     ];
-    expect(monthlyPlanningSummary(plans, [], entries, '2026-11').expectedIncomeCents).toBe(28000);
+    expect(monthlyPlanningSummary(plans, [], entries, '2026-11').expectedIncomeCents).toBe(30000);
     expect(monthlyPlanningSummary(plans, [], [entry({ kind: 'income', amountCents: 30000, status: 'paid', paidOn: '2026-11-10' })], '2026-11').expectedIncomeCents).toBe(30000);
   });
 
@@ -160,12 +160,29 @@ describe('conciliação entre previsão e lançamento', () => {
     expect(monthlyPlanningSummary(changedPlans, occurrences, [], '2026-11')).toMatchObject({ installmentCents: 1234, reserveCents: 2345 });
   });
 
-  it('lançamento real tem prioridade sobre valor e vencimento do snapshot', () => {
+  it('snapshot mantém a previsão enquanto o vínculo expõe o lançamento real atualizado', () => {
     const item = plan({ description: 'Descrição da época', amountCents: 10000 });
     const occurrence: PlanOccurrence = { id: 'plan:2026-11', planId: 'plan', month: '2026-11', status: 'pending', linkedEntryId: 'entry', updatedAt: '2026-11-10T00:00:00.000Z', snapshot: snapshotForRow(occurrencesForMonth([item], '2026-11')[0]) };
-    const actual = entry({ planId: 'plan', planMonth: '2026-11', amountCents: 11500, dueOn: '2026-11-12' });
+    const actual = entry({ planId: 'plan', planMonth: '2026-11', description: 'Conta corrigida em lançamentos', amountCents: 11500, dueOn: '2026-11-12', status: 'paid', paidOn: '2026-11-13' });
     const row = rowsForMonth([{ ...item, description: 'Descrição nova', amountCents: 20000 }], [occurrence], [actual], '2026-11')[0];
-    expect(row).toMatchObject({ amountCents: 11500, dueOn: '2026-11-12', plan: { description: 'Descrição da época' } });
+    expect(row).toMatchObject({ amountCents: 10000, dueOn: '2026-11-10', plan: { description: 'Descrição da época' }, linkedEntry: actual });
+    expect(monthlyPlanningSummary([item], [occurrence], [actual], '2026-11').fixedCents).toBe(10000);
+  });
+
+  it('sem snapshot a previsão ativa ainda prevalece sobre o lançamento real vinculado', () => {
+    const item = plan({ description: 'Previsão atual', amountCents: 15000, dueDay: 25 });
+    const actual = entry({ planId: item.id, planMonth: '2026-11', description: 'Registro anterior', amountCents: 12000, dueOn: '2026-11-12' });
+    expect(rowsForMonth([item], [], [actual], '2026-11')[0]).toMatchObject({
+      amountCents: 15000, dueOn: '2026-11-25', plan: { description: 'Previsão atual' }, linkedEntry: actual,
+    });
+  });
+
+  it('vínculo legado sem previsão nem snapshot conserva descrição e data reais', () => {
+    const item = plan({ startMonth: '2027-01', description: 'Regra futura' });
+    const actual = entry({ planId: item.id, planMonth: '2026-11', description: 'Registro do mês anterior', amountCents: 12000, dueOn: '2026-11-12' });
+    expect(rowsForMonth([item], [], [actual], '2026-11')[0]).toMatchObject({
+      amountCents: 12000, dueOn: '2026-11-12', plan: { description: 'Registro do mês anterior' }, linkedEntry: actual,
+    });
   });
 });
 

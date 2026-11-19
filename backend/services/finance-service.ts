@@ -1,6 +1,6 @@
 import { AppError, type AcademicState, type FinanceCommand } from '../contracts';
 import { isValidDate, localDate } from '../../shared/domain/finance';
-import { isValidMonth, rowsForMonth, snapshotForRow, validatePlanInput } from '../../shared/domain/planning';
+import { isValidMonth, occurrencesForMonth, rowsForMonth, snapshotForRow, validatePlanInput } from '../../shared/domain/planning';
 import type { Account, Category, Entry, EntryInput } from '../../shared/domain/types';
 import type { PlanInput, PlanItem, PlanOccurrence } from '../../shared/domain/planning-types';
 import { parseBackup } from './backup';
@@ -65,7 +65,7 @@ export class FinanceService {
           return { state: restored, result: undefined };
         }
         case 'savePlan': {
-          const plan = this.savePlan(state, payload.input, optionalId(payload.id), payload.expectedVersion);
+          const plan = this.savePlan(state, payload.input, optionalId(payload.id), payload.expectedVersion, month(payload.referenceMonth ?? this.today().slice(0, 7)));
           if (payload.completion !== undefined) this.applyPlanCompletion(state, plan, payload.completion);
           result = plan;
           break;
@@ -178,10 +178,11 @@ export class FinanceService {
     if (!entry.planId || !entry.planMonth) return;
     const plan = this.plan(state, entry.planId);
     const previous = state.occurrences.find((item) => item.planId === entry.planId && item.month === entry.planMonth);
+    const forecast = occurrencesForMonth([plan], entry.planMonth)[0];
     const occurrence: PlanOccurrence = {
       id: `${entry.planId}:${entry.planMonth}`, planId: entry.planId, month: entry.planMonth,
       status: !removeLink && entry.status === 'paid' ? 'done' : 'pending', updatedAt: this.now(),
-      snapshot: previous?.snapshot ?? { type: plan.type, description: entry.description, amountCents: entry.amountCents, dueOn: entry.dueOn },
+      snapshot: previous?.snapshot ?? (forecast ? snapshotForRow(forecast) : { type: plan.type, description: entry.description, amountCents: entry.amountCents, dueOn: entry.dueOn }),
       ...(!removeLink ? { linkedEntryId: entry.id } : {}),
     };
     if (previous) state.occurrences[state.occurrences.indexOf(previous)] = occurrence;
@@ -240,7 +241,7 @@ export class FinanceService {
     state.settings = { ...state.settings, displayName: input.displayName.trim(), exampleMode: false };
   }
 
-  private savePlan(state: AcademicState, raw: unknown, id?: string, expectedVersion?: unknown): PlanItem {
+  private savePlan(state: AcademicState, raw: unknown, id: string | undefined, expectedVersion: unknown, referenceMonth: string): PlanItem {
     const clean = validatePlanInput(object(raw, 'Planejamento') as unknown as PlanInput);
     if (clean.accountId) this.account(state, clean.accountId);
     if (clean.categoryId && state.categories.find((item) => item.id === clean.categoryId)?.kind !== (clean.type === 'salary' ? 'income' : 'expense')) throw new AppError('Escolha uma categoria compatível com o planejamento.', 400);
@@ -251,6 +252,15 @@ export class FinanceService {
     const plan: PlanItem = { ...clean, id: existing?.id ?? crypto.randomUUID(), version: nextVersion(existing?.version), createdAt: existing?.createdAt ?? this.now(), updatedAt: this.now() };
     if (existing) state.plans[state.plans.indexOf(existing)] = plan;
     else state.plans.push(plan);
+    if (existing) {
+      state.occurrences = state.occurrences.map((occurrence) => {
+        if (occurrence.planId !== plan.id || occurrence.month < referenceMonth) return occurrence;
+        const forecast = occurrencesForMonth([plan], occurrence.month)[0];
+        // Se a nova regra já não vence nessa competência, a referência anterior
+        // continua registrando o compromisso que foi acompanhado naquele mês.
+        return forecast ? { ...occurrence, snapshot: snapshotForRow(forecast), updatedAt: this.now() } : occurrence;
+      });
+    }
     return plan;
   }
 

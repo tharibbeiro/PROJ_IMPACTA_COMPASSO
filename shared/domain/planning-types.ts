@@ -52,7 +52,7 @@ export interface PlanOccurrence {
   status: 'pending' | 'done';
   linkedEntryId?: string;
   updatedAt: string;
-  /** Congela a referência do mês quando registrado ou conferido pela primeira vez. */
+  /** Previsão da competência. Edições da regra preservam snapshots anteriores ao mês de referência. */
   snapshot?: PlanningOccurrenceSnapshot;
 }
 
@@ -70,13 +70,13 @@ export interface PlanningRow {
   remainingAfterThisMonth?: number;
   futureBalanceCents?: number;
   lastDueOn?: string;
-  /** Presente somente quando há lançamento financeiro vinculado. */
+  /** Realização financeira vinculada, separada do valor e vencimento previstos na linha. */
   linkedEntry?: Entry;
   occurrence?: PlanOccurrence;
 }
 
 export interface MonthlyPlanningSummary {
-  /** Previsões de salário/adiantamento, substituídas pelo valor real quando vinculadas. */
+  /** Previsões de receitas da competência, independentes dos valores efetivamente recebidos. */
   expectedIncomeCents: number;
   fixedCents: number;
   cardFixedCents: number;

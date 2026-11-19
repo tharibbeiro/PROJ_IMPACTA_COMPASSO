@@ -25,12 +25,13 @@ Na inclusão, a confirmação pertence ao mês da primeira data escolhida. Na ed
 
 A previsão e uma eventual alteração da confirmação são enviadas em um único comando e gravadas juntas. Se qualquer validação falhar, nenhuma das duas alterações é aplicada. Ao editar somente a previsão, o estado do pagamento existente não é reenviado. Alterar explicitamente a data ou desmarcar um pagamento atualiza o lançamento vinculado, sem criar outro; seus valores, descrição e vencimento continuam preservados.
 
-
 ## Evitar duplicações
 
 Cada item bancário tem no máximo um lançamento vinculado por mês. O usuário pode registrar um novo pagamento/recebimento ou escolher um lançamento compatível já existente. Vincular um lançamento pendente não o transforma em pago.
 
-Um recebimento manual não é somado automaticamente à renda prevista, pois pode ser o próprio salário já cadastrado. O vínculo é explícito. O valor real vinculado substitui a previsão correspondente.
+Um recebimento manual não é somado automaticamente à renda prevista, pois pode ser o próprio salário já cadastrado. O vínculo é explícito. O valor real vinculado fica separado do valor previsto: o orçamento usa a previsão e o saldo da conta usa o recebimento efetivo.
+
+Por exemplo, uma receita prevista de R$ 200,00 pode estar vinculada a um recebimento de R$ 180,00. O Planejamento mantém R$ 200,00 no orçamento, enquanto o lançamento e o saldo consideram R$ 180,00. O vínculo também informa a situação e a data reais sem substituir o vencimento planejado.
 
 Se o pagamento ocorrer fora do mês de referência, o orçamento permanece no mês planejado, enquanto o caixa usa a data real informada. A interface pede confirmação dessa diferença.
 
@@ -57,7 +58,11 @@ Compras não previstas ainda precisam ser incluídas no orçamento. Essa marcaç
 
 ## Edição, encerramento e reservas
 
-A primeira confirmação/conferência guarda uma referência do mês. Editar a regra ajusta previsões ainda não registradas e preserva as ocorrências anteriores. Encerrar interrompe novas previsões a partir do mês selecionado, incluindo esse mês.
+A primeira confirmação/conferência guarda a previsão daquela competência, separada do lançamento real. Editar a regra atualiza nome, valor e vencimento da previsão no mês consultado e nos meses posteriores em que ela continuar ativa, inclusive quando já existe confirmação. A lista e os totais do Planejamento usam essa previsão atualizada. Os lançamentos vinculados mantêm seu valor, sua descrição, suas datas e sua situação até serem editados explicitamente.
+
+As referências registradas nos meses anteriores ao mês consultado são preservadas. Se a nova regra deixar de vencer em uma competência já registrada, por mudança do início, término ou calendário anual, a referência histórica daquela competência também permanece. O servidor recebe o mês consultado em `referenceMonth`; chamadas que não informam esse campo usam o mês atual do servidor.
+
+Registros antigos sem uma previsão ativa nem uma referência salva continuam visíveis pelos dados do lançamento vinculado. Encerrar interrompe novas previsões a partir do mês selecionado, incluindo esse mês, sem apagar as referências já registradas.
 
 Marcar uma reserva como separada registra seu acompanhamento no planejamento, mas não cria despesa ou movimentação bancária.
 

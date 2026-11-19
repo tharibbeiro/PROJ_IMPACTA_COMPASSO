@@ -107,7 +107,7 @@ export function occurrencesForMonth(plans: PlanItem[], month: string): PlanningR
 
 type LinkedEntry = Entry & { planId?: string; planMonth?: string };
 
-/** Captura a referência do mês, sem mudar quando o plano for editado depois. */
+/** Captura a previsão da competência; edições posteriores preservam os meses anteriores. */
 export function snapshotForRow(row: PlanningRow): PlanningOccurrenceSnapshot {
   return {
     type: row.plan.type,
@@ -161,7 +161,7 @@ function linkedEntriesForMonth(plans: PlanItem[], occurrences: PlanOccurrence[],
   return result;
 }
 
-/** Une previsões e registros reais sem somá-los duas vezes. Registros antigos permanecem após alterações do plano. */
+/** Mantém previsão e realização separadas, preservando referências históricas da competência. */
 export function rowsForMonth(plans: PlanItem[], occurrences: PlanOccurrence[], entries: Entry[], month: string): PlanningRow[] {
   monthIndex(month);
   const rows = new Map(occurrencesForMonth(plans, month).map((row) => [row.plan.id, row]));
@@ -173,9 +173,16 @@ export function rowsForMonth(plans: PlanItem[], occurrences: PlanOccurrence[], e
   const linked = linkedEntriesForMonth(plans, occurrences, entries, month);
   for (const [id, items] of linked) {
     const plan = plans.find((item) => item.id === id)!;
-    const existing = rows.get(id) ?? rowForPlan(plan, month);
     const entry = items[0];
-    rows.set(id, { ...existing, amountCents: safeSum(items.map((item) => item.amountCents)), dueOn: entry.dueOn, linkedEntry: entry });
+    // O realizado informa a situação e a conferência, sem substituir a previsão.
+    // Sem previsão ativa nem snapshot, um vínculo legado ainda precisa aparecer.
+    const existing = rows.get(id) ?? {
+      ...rowForPlan(plan, month),
+      plan: { ...plan, description: entry.description },
+      amountCents: safeSum(items.map((item) => item.amountCents)),
+      dueOn: entry.dueOn,
+    };
+    rows.set(id, { ...existing, linkedEntry: entry });
   }
   return [...rows.values()].map((row) => ({ ...row, occurrence: occurrences.find((item) => item.planId === row.plan.id && item.month === month) }))
     .sort((a, b) => a.dueOn.localeCompare(b.dueOn) || a.plan.description.localeCompare(b.plan.description, 'pt-BR'));
